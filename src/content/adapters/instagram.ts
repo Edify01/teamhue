@@ -96,77 +96,52 @@ function nameOf(el: HTMLElement): string | null {
   return null;
 }
 
-/** The open conversation pane (everything right of the inbox), if any. */
-function conversationPane(): HTMLElement | null {
-  const composer = document.querySelector<HTMLElement>(
-    'div[role="textbox"][contenteditable="true"], textarea[placeholder]',
-  );
-  if (!composer) return null;
-
-  let node: HTMLElement | null = composer;
-  while (node && node !== document.body) {
-    const r = node.getBoundingClientRect();
-    if (r.height > window.innerHeight * 0.6) return node;
-    node = node.parentElement;
-  }
-  return null;
-}
-
-function looksLikeRow(el: HTMLElement, pane: HTMLElement | null): boolean {
-  if (pane && pane.contains(el)) return false;
-  if (el.closest('nav, [role="navigation"]')) return false;
-
-  const r = el.getBoundingClientRect();
-  if (r.width < 200 || r.height < 44 || r.height > 120) return false;
-
-  // Avatar present (profile pictures are <img>, sometimes inside <canvas> wrappers).
-  if (!el.querySelector('img')) return false;
-
-  // Name + preview — single-line items are headers, tabs, or nav entries.
-  return textLines(el).length >= 2;
+/**
+ * The inbox column is always on the left part of the window; the open
+ * conversation (whose message bubbles also have avatars + text) is to the right.
+ */
+function inInboxColumn(r: DOMRect): boolean {
+  return r.left < Math.max(window.innerWidth * 0.35, 120) && r.width >= 200;
 }
 
 /**
- * Picks the inbox rows from all candidates.
- *
- * Message bubbles and random UI can occasionally pass `looksLikeRow`; inbox
- * rows, however, are stacked in one column with identical left edge and width.
- * We keep the largest such column.
+ * Climbs from any element inside a conversation to the full contact box:
+ * the OUTERMOST ancestor that is still row-sized (≤ 130px tall). The list
+ * container above it is much taller, so this lands exactly on the box behind
+ * the avatar, name and preview.
  */
-function inboxRows(): HTMLElement[] {
-  const pane = conversationPane();
-  const candidates = Array.from(
-    document.querySelectorAll<HTMLElement>(
-      '[role="button"], [role="listitem"], a[href*="/direct/t/"]',
-    ),
-  ).filter((el) => looksLikeRow(el, pane));
-
-  // Keep the outermost qualifying element: that's the full row box.
-  const outer = candidates.filter(
-    (el) => !candidates.some((other) => other !== el && other.contains(el)),
-  );
-
-  const columns = new Map<string, HTMLElement[]>();
-  for (const el of outer) {
-    const r = el.getBoundingClientRect();
-    const col = `${Math.round(r.left / 4)}:${Math.round(r.width / 4)}`;
-    const list = columns.get(col) ?? [];
-    list.push(el);
-    columns.set(col, list);
+export function rowBoxFrom(start: Element | null): HTMLElement | null {
+  let node = start instanceof HTMLElement ? start : start?.parentElement ?? null;
+  let best: HTMLElement | null = null;
+  while (node && node !== document.body && node !== document.documentElement) {
+    const r = node.getBoundingClientRect();
+    if (r.height > 130) break;
+    if (r.height >= 40 && r.width >= 200) best = node;
+    node = node.parentElement;
   }
+  if (!best) return null;
+  if (best.closest('nav, [role="navigation"], [role="tablist"]')) return null;
 
-  let best: HTMLElement[] = [];
-  for (const list of columns.values()) {
-    if (
-      list.length > best.length ||
-      (list.length === best.length &&
-        list.length > 0 &&
-        list[0].getBoundingClientRect().left < best[0].getBoundingClientRect().left)
-    ) {
-      best = list;
-    }
-  }
+  const r = best.getBoundingClientRect();
+  if (!inInboxColumn(r)) return null;
+  if (!best.querySelector('img')) return null; // every conversation has an avatar
+  if (textLines(best).length < 2) return null; // name + preview
   return best;
+}
+
+/** Every conversation box currently rendered in the inbox. */
+function inboxRows(): HTMLElement[] {
+  const rows = new Set<HTMLElement>();
+  const seeds = document.querySelectorAll<HTMLElement>('img, span[dir="auto"]');
+  for (const seed of Array.from(seeds)) {
+    const r = seed.getBoundingClientRect();
+    if (r.width === 0 || r.left > window.innerWidth * 0.35) continue;
+    const box = rowBoxFrom(seed);
+    if (box) rows.add(box);
+  }
+  // Drop any box nested inside another detected box.
+  const list = Array.from(rows);
+  return list.filter((b) => !list.some((o) => o !== b && o.contains(b)));
 }
 
 /* ------------------------------------------------------- learn id from clicks */
@@ -179,13 +154,26 @@ if (/(^|\.)instagram\.com$/.test(location.hostname)) {
   document.addEventListener(
     'click',
     (e) => {
-      const path = e.composedPath();
-      const row = inboxRows().find((r) => path.includes(r));
-      const name = row ? nameOf(row) : null;
+      const box = rowBoxFrom(e.target as Element);
+      const name = box ? nameOf(box) : null;
       if (name) lastClicked = { name, at: Date.now() };
     },
     true,
   );
+}
+
+/** Open conversation pane: the column containing the message composer. */
+function conversationPane(): HTMLElement | null {
+  const composer = document.querySelector<HTMLElement>(
+    'div[role="textbox"][contenteditable="true"], textarea',
+  );
+  let node = composer;
+  while (node && node !== document.body) {
+    const r = node.getBoundingClientRect();
+    if (r.height > window.innerHeight * 0.6 && r.left > window.innerWidth * 0.2) return node;
+    node = node.parentElement;
+  }
+  return null;
 }
 
 /** Name shown in the open conversation's header (fallback when no click seen). */

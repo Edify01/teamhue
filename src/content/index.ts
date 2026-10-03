@@ -191,22 +191,6 @@ function onPageClick(e: MouseEvent) {
   openPickerFor(hit, hit.element.getBoundingClientRect());
 }
 
-/**
- * Right-click a conversation row to colour it.
- *
- * Alt+Click alone was undiscoverable — on an inbox with no assignments yet
- * there was no visible way in, which made the extension look broken. The
- * context menu is the affordance people reach for instinctively.
- */
-function onContextMenu(e: MouseEvent) {
-  const hit = rowUnder(e);
-  if (!hit) return;
-
-  e.preventDefault();
-  e.stopPropagation();
-  openPickerFor(hit, hit.element.getBoundingClientRect());
-}
-
 function openPickerFor(thread: ActiveThread, anchor: DOMRect) {
   if (!adapter) return;
   const { threadKey, label } = thread;
@@ -417,7 +401,20 @@ async function boot() {
   });
 
   document.addEventListener('click', onPageClick, true);
-  document.addEventListener('contextmenu', onContextMenu, true);
+  // Instagram/Gmail react on pointerdown/mousedown; swallow those for Alt+click
+  // so the page doesn't navigate before the picker opens.
+  for (const type of ['pointerdown', 'mousedown', 'mouseup', 'pointerup'] as const) {
+    document.addEventListener(
+      type,
+      (e) => {
+        if ((e as MouseEvent).altKey && rowUnder(e as MouseEvent)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      },
+      true,
+    );
+  }
   window.addEventListener('scroll', repaintSoon, { passive: true, capture: true });
   window.addEventListener('resize', repaintSoon, { passive: true });
 
