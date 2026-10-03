@@ -1,5 +1,6 @@
 import { normalizePhone } from '@/shared/util';
 import type { Adapter, ThreadTarget } from './types';
+import { expandToRow, dedupe } from './dom';
 
 /**
  * Google Voice adapter.
@@ -78,21 +79,24 @@ export const googleVoiceAdapter: Adapter = {
 
   findThreads(): ThreadTarget[] {
     const out: ThreadTarget[] = [];
-    const seen = new Set<HTMLElement>();
 
     const rows = document.querySelectorAll<HTMLElement>(ROW_SELECTOR);
     for (const row of Array.from(rows)) {
-      if (seen.has(row)) continue;
       // Skip containers that merely wrap other rows.
       if (row.querySelector(ROW_SELECTOR)) continue;
 
       const found = identify(row);
       if (!found) continue;
 
-      seen.add(row);
-      out.push({ element: row, threadKey: found.key, label: found.label });
+      // Expand to the full contact box so the whole row tints, not just the
+      // inner text block.
+      const element = expandToRow(row);
+      if (!element || element.getBoundingClientRect().height === 0) continue;
+
+      out.push({ element, threadKey: found.key, label: found.label });
     }
-    return out;
+
+    return dedupe(out);
   },
 
   observeRoots() {

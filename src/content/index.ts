@@ -213,9 +213,23 @@ function startObserving() {
     const relevant = mutations.some((m) => {
       const t = m.target as HTMLElement;
       if (t?.classList?.contains('th-chip')) return false;
+
       if (m.type === 'attributes') {
         const name = m.attributeName ?? '';
-        return !name.startsWith('data-th') && name !== 'style' && name !== 'class';
+        // Our own bookkeeping attributes never warrant a repaint.
+        if (name.startsWith('data-th')) return false;
+
+        // `class`/`style` DO matter: Gmail and other SPA inboxes rewrite them a
+        // few seconds after load (read/unread churn, virtualization) and strip
+        // our paint. But we set them ourselves too, so only react when the row
+        // has actually lost its styling — otherwise we ping-pong forever.
+        if (name === 'class' || name === 'style') {
+          return (
+            t.hasAttribute?.('data-th-key') === true &&
+            (!t.classList.contains('th-painted') || t.style.getPropertyValue('--th-color') === '')
+          );
+        }
+        return true;
       }
       return true;
     });
@@ -225,7 +239,13 @@ function startObserving() {
   const roots = adapter?.observeRoots?.() ?? [];
   const targets = roots.length ? roots : [document.body];
   for (const root of targets) {
-    observer.observe(root, { childList: true, subtree: true });
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+      // Required to notice host re-renders that clobber our classes/variables.
+      attributes: true,
+      attributeFilter: ['class', 'style', 'data-legacy-thread-id', 'data-convid', 'href'],
+    });
   }
 }
 

@@ -54,9 +54,18 @@ export function paint(target: ThreadTarget, assignment: AssignmentLite, settings
   const el = target.element;
   const sig = signature(assignment, settings);
 
-  if (el.getAttribute(SIG_ATTR) === sig && el.getAttribute(PAINTED_ATTR) === assignment.threadKey) {
-    return false;
-  }
+  // Idempotence check must verify the *rendered* state, not just our bookkeeping
+  // attributes. Gmail (and Angular apps generally) rewrite a row's `class` and
+  // `style` on re-render, silently stripping `th-painted` and our CSS variables
+  // while leaving `data-th-*` intact. Checking only the data attributes made us
+  // conclude "already painted" and skip the repair — the colour vanished for good.
+  const intact =
+    el.getAttribute(SIG_ATTR) === sig &&
+    el.getAttribute(PAINTED_ATTR) === assignment.threadKey &&
+    el.classList.contains('th-painted') &&
+    el.style.getPropertyValue('--th-color') !== '';
+
+  if (intact) return false;
 
   el.setAttribute(PAINTED_ATTR, assignment.threadKey);
   el.setAttribute(SIG_ATTR, sig);
