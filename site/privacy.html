@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy — TeamHue</title>
+    <meta name="description" content="TeamHue's privacy policy. We store conversation identifiers and colors — never message content." />
+    <link rel="icon" type="image/png" href="/icon-128.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="brand" href="/"><span class="brand-mark">T</span><span>TeamHue</span></a>
+      <nav class="nav-links"><a href="/">Home</a><a class="btn btn-primary btn-sm" href="/#install">Get TeamHue</a></nav>
+    </header>
+
+    <section class="section">
+      <div class="container narrow">
+        <h1 style="font-size: clamp(2rem, 4vw, 2.6rem); margin-bottom: 8px">Privacy Policy</h1>
+        <p class="micro" style="margin-bottom: 36px">Last updated: October 3, 2026</p>
+
+        <div class="callout" style="margin-bottom: 34px">
+          <strong>The short version</strong>
+          TeamHue stores a conversation identifier and a color. It never reads, stores, or
+          transmits the content of your messages. All data lives in a database your team controls.
+        </div>
+
+        <h2 style="font-size: 1.3rem; margin-top: 34px">What TeamHue stores</h2>
+        <p class="section-lede">When you assign a color to a conversation, TeamHue saves:</p>
+        <ul style="color: var(--fg-muted); font-size: 14.5px; line-height: 1.8">
+          <li>A <strong>conversation identifier</strong> — an Instagram thread ID, a phone number, or an email address</li>
+          <li>A <strong>hex color</strong> (for example <code>#6366f1</code>)</li>
+          <li>An optional <strong>display label</strong> — the contact's name or handle, so lists stay readable</li>
+          <li>An optional <strong>owner</strong> and a short <strong>note</strong> you type yourself</li>
+          <li>Your <strong>account details</strong> — email address, display name, and team membership</li>
+        </ul>
+
+        <h2 style="font-size: 1.3rem; margin-top: 34px">What TeamHue never stores</h2>
+        <ul style="color: var(--fg-muted); font-size: 14.5px; line-height: 1.8">
+          <li>The content of any message, email, call, or text</li>
+          <li>Attachments, photos, or files</li>
+          <li>Contact lists, browsing history, or activity on any other website</li>
+          <li>Passwords or credentials for Instagram, Google, or any other service</li>
+        </ul>
+
+        <h2 style="font-size: 1.3rem; margin-top: 34px">Why the permissions are needed</h2>
+        <p class="section-lede">
+          TeamHue requests access to Instagram, Google Voice, Gmail and Outlook because it must
+          read the page structure to find conversation rows and apply colors to them. This access
+          is used <strong>only</strong> to locate rows and style them. The extension never reads
+          message bodies, and it never sends page content anywhere.
+        </p>
+
+        <h2 style="font-size: 1.3rem; margin-top: 34px">Where your data lives</h2>
+        <p class="section-lede">
+          TeamHue has no server of its own. Your team's data is stored in a
+          <a href="https://supabase.com" target="_blank" rel="noopener" style="color: var(--indigo); font-weight: 600">Supabase</a>
+          database controlled by whoever set up your team. Data travels directly from your browser
+          to that database over an encrypted connection. Access is enforced by row-level security,
+          so only members of your team can read or change your team's colors.
+        </p>
+
+        <h2 style="font-size: 1.3rem; margin-top: 34px">What's stored on your computer</h2>
+        <p class="section-lede">
+          TeamHue keeps a local copy of your session and your team's color assignments in Chrome's
+          extension storage. This makes the extension fast and lets it work briefly offline. It is
+          removed when you sign out or uninstall.
+        </p>
+
+        <h2 style="font-size: 1.3rem; margin-top: 34px">Third parties</h2>
+        <p class="section-lede">
+          TeamHue contains no analytics, no advertising, and no third-party trackers. The only
+          network requests it makes are to your own Supabase project.
+        </p>
+
+        <h2 style="font-size: 1.3rem; margin-top: 34px">Deleting your data</h2>
+        <p class="section-lede">
+          Remove individual colors from the extension's settings page at any time. Use
+          <strong>Leave workspace</strong> to remove yourself from a team. To erase everything,
+          the team owner can delete the workspace from the Supabase dashboard, which permanently
+          removes all associated members and color assignments.
+        </p>
+
+        <h2 style="font-size: 1.3rem; margin-top: 34px">Contact</h2>
+        <p class="section-lede">
+          Questions about this policy can be raised as an issue on the project's
+          <a id="repo-link" href="https://github.com/Edify01/teamhue" target="_blank" rel="noopener" style="color: var(--indigo); font-weight: 600">GitHub repository</a>.
+        </p>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="container footer-inner">
+        <div class="brand"><span class="brand-mark">T</span><span>TeamHue</span></div>
+        <div class="footer-links"><a href="/">Home</a><a href="/#install">Install</a><a href="/#faq">FAQ</a></div>
+      </div>
+    </footer>
+  </body>
+</html>

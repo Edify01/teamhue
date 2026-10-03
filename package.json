@@ -1,0 +1,31 @@
+{
+  "name": "teamhue",
+  "private": true,
+  "version": "1.0.0",
+  "description": "TeamHue — color-code conversations across Instagram, Google Voice and Gmail so your team always knows who is talking to who.",
+  "type": "module",
+  "scripts": {
+    "icons": "node scripts/make-icons.mjs",
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "package": "node scripts/build.mjs && node scripts/package.mjs",
+    "site:dev": "npm --prefix site run dev",
+    "site:build": "npm --prefix site run build",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .package"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "@types/node": "^26.6.4",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "^5.5.4",
+    "vite": "^7.3.6"
+  }
+}
