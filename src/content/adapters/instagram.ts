@@ -2,30 +2,33 @@ import type { Adapter, ActiveThread, ThreadTarget } from './types';
 import { cleanLabel } from './dom';
 
 /**
- * Instagram Direct adapter.
+ * Instagram Direct adapter (desktop).
  *
- * Instagram's current inbox renders each conversation as a plain
- * `div[role="button"]` — there is NO thread id anywhere in the row's markup.
- * The only `/direct/t/<id>` information on the page is the URL of the *open*
- * conversation. (Matching `/direct/t/` links therefore only ever hit the
- * sidebar's Messages icon, which is what got painted before.)
+ * Instagram's inbox rows carry no thread id in their markup, and class names
+ * are randomised. So we work from layout, in three steps:
  *
- * So rows are found structurally:
- *   • a clickable element (role=button / listitem / thread anchor)
- *   • containing an avatar <img> and at least two text lines (name + preview)
- *   • row-sized (wide, 44–120px tall), outside the open conversation pane
- *   • aligned in the same column as its siblings (the inbox list)
+ *   1. Find the INBOX LIST: the scrolling container on the left of the window
+ *      that holds the most profile pictures.
+ *   2. A CONVERSATION BOX is the outermost element inside that list, around a
+ *      profile picture, that is still one row tall and spans the list width.
+ *      Nothing outside the list (chat header, messages, dates, sidebar) can
+ *      ever qualify.
+ *   3. Each box is keyed by the contact's display name as shown in the list
+ *      (`ig:n:<name>`), so every teammate gets the same key.
  *
- * Rows are keyed by the contact's display name (`ig:n:<name>`), identical for
- * every teammate on the same account. When a conversation is opened we learn
- * its numeric/alphanumeric id from the URL and remember id ↔ name, so the
- * floating button and the list always refer to the same colour.
+ * The paintbrush (open conversation) resolves to a box in the list using, in
+ * order: Instagram's own "selected" marker, the box you clicked to open the
+ * chat, and the header's profile picture matched against the list's pictures.
+ * It never guesses from hover/background colours.
  */
 
 const THREAD_PATH = /\/direct\/t\/([A-Za-z0-9._-]+)/;
-const MAP_KEY = 'teamhue:ig-thread-names';
+// v2: earlier versions stored some wrong id→name pairs; start clean.
+const MAP_KEY = 'teamhue:ig-thread-names:v2';
+const MAX_ROW_HEIGHT = 130;
+const MIN_ROW_HEIGHT = 36;
 
-/* ------------------------------------------------------------------ id ↔ name */
+/* ------------------------------------------------------------------ helpers */
 
 function normalizeName(name: string): string {
   return name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -34,6 +37,51 @@ function normalizeName(name: string): string {
 function nameKey(name: string): string {
   return `ig:n:${normalizeName(name)}`;
 }
+
+function threadIdFromPath(path: string | null | undefined): string | null {
+  const id = path?.match(THREAD_PATH)?.[1];
+  return id && id !== 'new' && id.length > 1 ? id : null;
+}
+
+const TIMESTAMP = /^(\d+\s*[smhdwy]|now|just now|active\b.*|·|seen\b.*|sent\b.*)$/i;
+
+/** Distinct visible text lines inside an element, in order. */
+function textLines(el: HTMLElement, limit = 6): string[] {
+  const lines: string[] = [];
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    const text = node.textContent?.replace(/\s+/g, ' ').trim();
+    if (!text || text === '·') continue;
+    if (lines[lines.length - 1] !== text) lines.push(text);
+    if (lines.length >= limit) break;
+  }
+  return lines;
+}
+
+/** The contact's display name: the first text line that isn't a timestamp. */
+function nameOf(row: HTMLElement): string | null {
+  for (const line of textLines(row)) {
+    const t = cleanLabel(line, 80);
+    if (t && !TIMESTAMP.test(t)) return t;
+  }
+  return null;
+}
+
+/** A stable identity for a profile picture: its alt text, else its file name. */
+function avatarId(img: HTMLImageElement | null): string | null {
+  if (!img) return null;
+  const alt = img.getAttribute('alt')?.trim().toLowerCase();
+  if (alt && alt.length > 2) return `alt:${alt}`;
+  try {
+    const file = new URL(img.currentSrc || img.src).pathname.split('/').pop();
+    return file ? `src:${file}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------- id ↔ name map */
 
 function loadMap(): Record<string, string> {
   try {
@@ -51,7 +99,7 @@ function remember(id: string, name: string) {
   try {
     localStorage.setItem(MAP_KEY, JSON.stringify(idToName));
   } catch {
-    /* storage full / blocked — the mapping just won't persist */
+    /* storage blocked — mapping just won't persist */
   }
 }
 
@@ -60,173 +108,153 @@ function idsForName(name: string): string[] {
   return Object.keys(idToName).filter((id) => normalizeName(idToName[id]) === n);
 }
 
-function threadIdFromPath(path: string | null | undefined): string | null {
-  const id = path?.match(THREAD_PATH)?.[1];
-  return id && id !== 'new' && id.length > 1 ? id : null;
-}
+/* --------------------------------------------------------------- inbox list */
 
-/* --------------------------------------------------------------- row parsing */
+let cachedList: HTMLElement | null = null;
 
-const TIMESTAMP = /^(\d+\s*[smhdwy]|now|just now|active.*|·)$/i;
-
-/** Distinct visible text lines inside a row, in order. */
-function textLines(el: HTMLElement): string[] {
-  const lines: string[] = [];
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    const text = node.textContent?.replace(/\s+/g, ' ').trim();
-    if (!text || text === '·') continue;
-    if (lines[lines.length - 1] !== text) lines.push(text);
-    if (lines.length >= 6) break;
-  }
-  return lines;
-}
-
-/** The contact's display name: the first text line that isn't a timestamp. */
-function nameOf(el: HTMLElement): string | null {
-  const preferred = el.querySelector<HTMLElement>('span[dir="auto"]');
-  const first = cleanLabel(preferred?.textContent, 80);
-  if (first && !TIMESTAMP.test(first)) return first;
-
-  for (const line of textLines(el)) {
-    const t = cleanLabel(line, 80);
-    if (t && !TIMESTAMP.test(t)) return t;
-  }
-  return null;
+function isScroller(el: HTMLElement): boolean {
+  const oy = getComputedStyle(el).overflowY;
+  return oy === 'auto' || oy === 'scroll';
 }
 
 /**
- * Right edge of the inbox list. Everything right of this (the open
- * conversation: header, message bubbles, dates) must never be treated as a
- * conversation box.
+ * The left-hand scrolling list of conversations. Chosen by voting: each
+ * visible profile picture on the left half of the window votes for its
+ * nearest scrolling ancestor; the container with the most votes wins.
  */
-function inboxRightEdge(): number {
-  const pane = conversationPane();
-  if (pane) return pane.getBoundingClientRect().left + 2;
-  // Inbox with no conversation open: the list still sits on the left.
-  return window.innerWidth * 0.45;
-}
+function inboxList(): HTMLElement | null {
+  if (cachedList?.isConnected) {
+    const r = cachedList.getBoundingClientRect();
+    if (r.height > 150 && r.width > 0) return cachedList;
+  }
+  cachedList = null;
 
-/** True when `el` lives inside a vertically scrollable list (the inbox). */
-function inScrollableList(el: HTMLElement): boolean {
-  let node = el.parentElement;
-  while (node && node !== document.body) {
-    const style = getComputedStyle(node);
-    if (
-      /(auto|scroll)/.test(style.overflowY) &&
-      node.scrollHeight > node.clientHeight + 4 &&
-      node.getBoundingClientRect().height > 200
-    ) {
-      return true;
+  const votes = new Map<HTMLElement, number>();
+  const half = window.innerWidth * 0.6;
+
+  for (const img of Array.from(document.images)) {
+    const r = img.getBoundingClientRect();
+    if (r.width < 20 || r.width > 120 || r.right > half) continue;
+
+    let node = img.parentElement;
+    while (node && node !== document.body) {
+      if (isScroller(node)) {
+        const nr = node.getBoundingClientRect();
+        if (nr.height > 150 && nr.width >= 180 && nr.right <= half + 4) {
+          votes.set(node, (votes.get(node) ?? 0) + 1);
+        }
+        break;
+      }
+      node = node.parentElement;
     }
-    node = node.parentElement;
   }
-  return false;
-}
 
-/**
- * Climbs from any element inside a conversation to the full contact box:
- * the OUTERMOST ancestor that is still row-sized (≤ 130px tall). The list
- * container above it is much taller, so this lands exactly on the box behind
- * the avatar, name and preview. Only boxes in the left-hand inbox qualify.
- */
-export function rowBoxFrom(start: Element | null, edge = inboxRightEdge()): HTMLElement | null {
-  let node = start instanceof HTMLElement ? start : start?.parentElement ?? null;
   let best: HTMLElement | null = null;
-  while (node && node !== document.body && node !== document.documentElement) {
-    const r = node.getBoundingClientRect();
-    if (r.height > 130) break;
-    if (r.height >= 40 && r.width >= 150) best = node;
-    node = node.parentElement;
+  let bestVotes = 1; // need at least 2 conversations to be confident
+  for (const [el, n] of votes) {
+    if (n > bestVotes) {
+      best = el;
+      bestVotes = n;
+    }
   }
-  if (!best) return null;
-  if (best.closest('nav, [role="navigation"], [role="tablist"]')) return null;
-
-  const r = best.getBoundingClientRect();
-  if (r.right > edge) return null; // inside the open conversation
-  if (!best.querySelector('img')) return null; // every conversation has an avatar
-  if (textLines(best).length < 2) return null; // name + preview
+  cachedList = best;
   return best;
 }
 
-/** Every conversation box currently rendered in the left-hand inbox list. */
+/**
+ * From any element inside a conversation box, returns the full box: the
+ * outermost ancestor (below the list) that is still one row tall and spans
+ * most of the list's width. Returns null for anything outside the list.
+ */
+function boxFrom(start: Element | null, list = inboxList()): HTMLElement | null {
+  if (!list || !start || !list.contains(start) || start === list) return null;
+
+  const listWidth = list.getBoundingClientRect().width;
+  let node: HTMLElement | null = start instanceof HTMLElement ? start : start.parentElement;
+  let best: HTMLElement | null = null;
+
+  while (node && node !== list) {
+    const r = node.getBoundingClientRect();
+    if (r.height > MAX_ROW_HEIGHT) break;
+    if (r.height >= MIN_ROW_HEIGHT && r.width >= listWidth * 0.6) best = node;
+    node = node.parentElement;
+  }
+
+  if (!best) return null;
+  if (!best.querySelector('img')) return null; // every conversation has a picture
+  if (!nameOf(best)) return null;
+  return best;
+}
+
 function inboxRows(): HTMLElement[] {
-  const edge = inboxRightEdge();
+  const list = inboxList();
+  if (!list) return [];
   const found = new Set<HTMLElement>();
-  for (const img of Array.from(document.querySelectorAll<HTMLElement>('img'))) {
-    const r = img.getBoundingClientRect();
-    if (r.width === 0 || r.right > edge) continue;
-    const box = rowBoxFrom(img, edge);
+  for (const img of Array.from(list.querySelectorAll('img'))) {
+    const box = boxFrom(img, list);
     if (box) found.add(box);
   }
+  const rows = Array.from(found);
+  return rows.filter((b) => !rows.some((o) => o !== b && o.contains(b)));
+}
 
-  let rows = Array.from(found);
-  rows = rows.filter((b) => !rows.some((o) => o !== b && o.contains(b)));
-  rows = rows.filter(inScrollableList);
+function toTarget(row: HTMLElement): ThreadTarget | null {
+  const name = nameOf(row);
+  if (!name) return null;
+  return {
+    element: row,
+    threadKey: nameKey(name),
+    label: name,
+    aliases: idsForName(name).map((id) => `ig:${id}`),
+  };
+}
 
-  // Real inbox rows share one column (same left edge and width). Keep the
-  // largest such group; strays (profile cards, banners) are dropped.
-  const groups = new Map<string, HTMLElement[]>();
-  for (const el of rows) {
-    const r = el.getBoundingClientRect();
-    const k = `${Math.round(r.left / 6)}:${Math.round(r.width / 6)}`;
-    groups.set(k, [...(groups.get(k) ?? []), el]);
+/* ------------------------------------------------ remember which box opened */
+
+let lastClicked: { name: string; at: number } | null = null;
+
+function noteClick(e: Event) {
+  const box = boxFrom(e.target as Element);
+  const name = box ? nameOf(box) : null;
+  if (name) lastClicked = { name, at: Date.now() };
+}
+
+if (/(^|\.)instagram\.com$/.test(location.hostname)) {
+  document.addEventListener('pointerdown', noteClick, true);
+  document.addEventListener('click', noteClick, true);
+}
+
+/* --------------------------------------------------------- open chat header */
+
+/** The profile picture at the top of the open conversation (right of the list). */
+function headerAvatar(): HTMLImageElement | null {
+  const list = inboxList();
+  const minLeft = list ? list.getBoundingClientRect().right - 2 : window.innerWidth * 0.3;
+  let best: HTMLImageElement | null = null;
+  for (const img of Array.from(document.images)) {
+    const r = img.getBoundingClientRect();
+    if (r.width < 20 || r.width > 80 || r.left < minLeft || r.top > 160) continue;
+    if (!best || r.top < best.getBoundingClientRect().top) best = img;
   }
-  let best: HTMLElement[] = [];
-  for (const g of groups.values()) if (g.length > best.length) best = g;
   return best;
 }
 
-/* ------------------------------------------------------- learn id from clicks */
-
-// Clicking a row navigates to /direct/t/<id>. Recording which row was clicked
-// lets us bind that id to the contact name the moment the URL changes.
-let lastClicked: { name: string; at: number } | null = null;
-
-if (/(^|\.)instagram\.com$/.test(location.hostname)) {
-  document.addEventListener(
-    'click',
-    (e) => {
-      const box = rowBoxFrom(e.target as Element);
-      const name = box ? nameOf(box) : null;
-      if (name) lastClicked = { name, at: Date.now() };
-    },
-    true,
-  );
-}
-
-/** Open conversation pane: the column containing the message composer. */
-function conversationPane(): HTMLElement | null {
-  const composer = document.querySelector<HTMLElement>(
-    'div[role="textbox"][contenteditable="true"], textarea',
-  );
-  let node = composer;
-  while (node && node !== document.body) {
-    const r = node.getBoundingClientRect();
-    if (r.height > window.innerHeight * 0.6 && r.left > window.innerWidth * 0.2) return node;
-    node = node.parentElement;
-  }
-  return null;
-}
-
-/** All short text lines in the open conversation's header area. */
-function headerTexts(pane: HTMLElement | null): string[] {
-  if (!pane) return [];
-  const top = pane.getBoundingClientRect().top;
+/** Short text lines near the top of the open conversation. */
+function headerTexts(): string[] {
+  const list = inboxList();
+  const minLeft = list ? list.getBoundingClientRect().right - 2 : window.innerWidth * 0.3;
   const out: string[] = [];
-  const els = pane.querySelectorAll<HTMLElement>('a[href^="/"]:not([href*="/direct/"]), h1, h2, span');
-  for (const el of Array.from(els)) {
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>('h1, h2, span, a'))) {
     const r = el.getBoundingClientRect();
-    if (r.height === 0 || r.top - top > 110) continue;
-    const text = cleanLabel(el.textContent, 80);
-    if (text && !TIMESTAMP.test(text) && !out.includes(text)) out.push(text);
-    if (out.length >= 12) break;
+    if (r.height === 0 || r.left < minLeft || r.top > 120) continue;
+    const t = cleanLabel(el.textContent, 80);
+    if (t && !TIMESTAMP.test(t) && !out.includes(t)) out.push(t);
+    if (out.length >= 15) break;
   }
   return out;
 }
 
-/* ------------------------------------------------------------------- adapter */
+/* ------------------------------------------------------------------ adapter */
 
 export const instagramAdapter: Adapter = {
   platform: 'instagram',
@@ -237,37 +265,22 @@ export const instagramAdapter: Adapter = {
 
   findThreads(): ThreadTarget[] {
     const out: ThreadTarget[] = [];
-    const usedKeys = new Set<string>();
-
+    const used = new Set<string>();
     for (const row of inboxRows()) {
-      const name = nameOf(row);
-      if (!name) continue;
-
-      const key = nameKey(name);
-      if (usedKeys.has(key)) continue; // one box per contact
-      usedKeys.add(key);
-
-      // Learn ids from rows that still carry an anchor (older layouts).
-      const anchorId = threadIdFromPath(
-        row.closest('a')?.getAttribute('href') ??
-          row.querySelector('a[href*="/direct/t/"]')?.getAttribute('href'),
-      );
-      if (anchorId) remember(anchorId, name);
-
-      out.push({
-        element: row,
-        threadKey: key,
-        label: name,
-        // Colours saved earlier via the floating button used `ig:<id>`.
-        aliases: idsForName(name).map((id) => `ig:${id}`),
-      });
+      const t = toTarget(row);
+      if (!t || used.has(t.threadKey)) continue;
+      used.add(t.threadKey);
+      out.push(t);
     }
     return out;
   },
 
+  threadAt(el: Element): ThreadTarget | null {
+    const box = boxFrom(el);
+    return box ? toTarget(box) : null;
+  },
+
   observeRoots() {
-    // Instagram swaps whole subtrees between layouts; observing body is the
-    // only root guaranteed to survive. Mutation handling is debounced upstream.
     return [document.body];
   },
 
@@ -275,54 +288,59 @@ export const instagramAdapter: Adapter = {
     const id = threadIdFromPath(location.pathname);
     if (!id) return null;
 
-    // The paintbrush must colour the conversation's box in the LEFT list,
-    // never the open chat's header. Resolve the name from the left list only.
-    if (lastClicked && Date.now() - lastClicked.at < 5000) {
-      remember(id, lastClicked.name);
-      lastClicked = null;
-    }
-
     const rows = inboxRows();
+    const byName = (n: string | null | undefined) =>
+      n ? rows.find((r) => normalizeName(nameOf(r) ?? '') === normalizeName(n)) ?? null : null;
 
-    // 1. Instagram marks the open conversation's row as selected/current.
-    const selected = rows.find(
-      (r) =>
-        r.matches('[aria-selected="true"], [aria-current="page"], [aria-current="true"]') ||
-        r.querySelector('[aria-selected="true"], [aria-current="page"], [aria-current="true"]'),
-    );
-    let name: string | null = selected ? nameOf(selected) : null;
+    let row: HTMLElement | null = null;
 
-    // 2. Otherwise, the row Instagram shades as active (different background).
-    if (!name) {
-      const shaded = rows.filter((r) => {
-        const bg = getComputedStyle(r).backgroundColor;
-        return bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && !r.classList.contains('th-painted');
-      });
-      if (shaded.length === 1) name = nameOf(shaded[0]);
+    // 1. Instagram's own "selected" marker on the open conversation's box.
+    row =
+      rows.find(
+        (r) =>
+          r.matches('[aria-selected="true"], [aria-current="page"], [aria-current="true"]') ||
+          !!r.querySelector('[aria-selected="true"], [aria-current="page"], [aria-current="true"]'),
+      ) ?? null;
+
+    // 2. The box you just clicked to open this chat.
+    if (!row && lastClicked && Date.now() - lastClicked.at < 8000) {
+      row = byName(lastClicked.name);
+      if (row) remember(id, lastClicked.name);
     }
 
-    // 3. Otherwise, what we learned when the row was clicked.
-    if (!name) name = idToName[id] ?? null;
+    // 3. Previously learned for this chat id.
+    if (!row && idToName[id]) row = byName(idToName[id]);
 
-    // 4. Last resort: a left-list name that appears in the chat header.
-    if (!name) {
-      const header = headerTexts(conversationPane()).map(normalizeName);
-      name =
-        rows
-          .map((r) => nameOf(r))
-          .find((n): n is string => Boolean(n) && header.includes(normalizeName(n!))) ?? null;
+    // 4. Header profile picture matched to the same picture in the list.
+    if (!row) {
+      const hid = avatarId(headerAvatar());
+      if (hid) {
+        const matches = rows.filter((r) => avatarId(r.querySelector('img')) === hid);
+        if (matches.length === 1) row = matches[0];
+      }
     }
 
-    if (!name) return null; // no left-hand box to colour → hide the button
-    remember(id, name);
-    return { threadKey: nameKey(name), label: name, aliases: [`ig:${id}`] };
+    // 5. Header text that exactly equals one box's name.
+    if (!row) {
+      const header = new Set(headerTexts().map(normalizeName));
+      const matches = rows.filter((r) => header.has(normalizeName(nameOf(r) ?? '')));
+      if (matches.length === 1) row = matches[0];
+    }
+
+    if (row) {
+      const name = nameOf(row)!;
+      remember(id, name);
+      return { threadKey: nameKey(name), label: name, aliases: [`ig:${id}`] };
+    }
+
+    // Chat open but its box is scrolled out of the list: use what we learned.
+    const known = idToName[id];
+    if (known) return { threadKey: nameKey(known), label: known, aliases: [`ig:${id}`] };
+
+    return null;
   },
 };
 
-// Exposed for tests / diagnostics.
-export const __instagramInternals = { inboxRows, nameOf, conversationPane };
-
-// Keep the map fresh if another tab updates it.
 window.addEventListener('storage', (e) => {
   if (e.key === MAP_KEY) idToName = loadMap();
 });

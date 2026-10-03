@@ -45,7 +45,9 @@ function shutdown() {
     fab?.remove();
     fab = null;
     picker.close?.();
-    document.removeEventListener('click', onPageClick, true);
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'] as const) {
+      window.removeEventListener(type, onAltGesture, true);
+    }
     window.removeEventListener('scroll', repaintSoon, true);
     window.removeEventListener('resize', repaintSoon);
   } catch {
@@ -165,7 +167,19 @@ async function onFabClick(e: MouseEvent) {
 
 /** Resolves the conversation row under a pointer event, if any. */
 function rowUnder(e: MouseEvent): ThreadTarget | null {
-  if (!adapter || !enabledHere()) return null;
+  if (!adapter || dead || !enabledHere()) return null;
+
+  // Prefer resolving directly from the clicked element — exact and immune to
+  // the list re-rendering between the last scan and this click.
+  const el = e.target instanceof Element ? e.target : null;
+  if (el && adapter.threadAt) {
+    try {
+      const hit = adapter.threadAt(el);
+      if (hit) return hit;
+    } catch {
+      /* fall through to scan */
+    }
+  }
 
   const targets = safeFindThreads();
   if (!targets.length) return null;
@@ -180,15 +194,35 @@ function rowUnder(e: MouseEvent): ThreadTarget | null {
   return node ? targets.find((t) => t.element.contains(node)) ?? null : null;
 }
 
-/** Alt/Option + click any conversation row opens the picker for that row. */
-function onPageClick(e: MouseEvent) {
-  if (!e.altKey) return;
-  const hit = rowUnder(e);
-  if (!hit) return;
+/**
+ * Alt/Option + press on a conversation box.
+ *
+ * Opens the picker on pointerdown (the earliest moment) and swallows every
+ * other event of the same gesture so the site never sees it. Clicks that land
+ * inside our own picker are left alone.
+ */
+let altGestureAt = 0;
+function onAltGesture(e: Event) {
+  const me = e as MouseEvent;
+  if (!me.altKey || dead) return;
+  if ((e.target as Element | null)?.closest?.('#th-fab, #th-toast, #th-picker-host')) return;
 
-  e.preventDefault();
-  e.stopPropagation();
-  openPickerFor(hit, hit.element.getBoundingClientRect());
+  if (e.type === 'pointerdown') {
+    if (me.button !== 0) return;
+    const hit = rowUnder(me);
+    if (!hit) return;
+    altGestureAt = Date.now();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    openPickerFor(hit, hit.element.getBoundingClientRect());
+    return;
+  }
+
+  // Remaining events from the same gesture: swallow them.
+  if (Date.now() - altGestureAt < 1500) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
 }
 
 function openPickerFor(thread: ActiveThread, anchor: DOMRect) {
@@ -400,21 +434,16 @@ async function boot() {
     }
   });
 
-  document.addEventListener('click', onPageClick, true);
-  // Instagram/Gmail react on pointerdown/mousedown; swallow those for Alt+click
-  // so the page doesn't navigate before the picker opens.
-  for (const type of ['pointerdown', 'mousedown', 'mouseup', 'pointerup'] as const) {
-    document.addEventListener(
-      type,
-      (e) => {
-        if ((e as MouseEvent).altKey && rowUnder(e as MouseEvent)) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      },
-      true,
-    );
+  // Alt/Option+click is handled on pointerdown at the WINDOW capture phase —
+  // before Instagram/Gmail/Voice handlers see the press — so the site can't
+  // navigate or swallow the gesture first. The rest of the gesture
+  // (mousedown/up, click) is then suppressed.
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'] as const) {
+    window.addEventListener(type, onAltGesture, true);
   }
+  // A newer copy of TeamHue (after an extension update) tells this one to stop.
+  document.dispatchEvent(new CustomEvent('teamhue:takeover'));
+  document.addEventListener('teamhue:takeover', shutdown, { once: true });
   window.addEventListener('scroll', repaintSoon, { passive: true, capture: true });
   window.addEventListener('resize', repaintSoon, { passive: true });
 

@@ -28,6 +28,8 @@ export interface Adapter {
   matches(): boolean;
   /** Find every conversation row currently in the DOM. */
   findThreads(): ThreadTarget[];
+  /** Resolve the conversation row containing `el`, if any (used for Alt+click). */
+  threadAt?(el: Element): ThreadTarget | null;
   /** Root node(s) to observe for mutations. Falls back to document.body. */
   observeRoots?(): Element[];
   /**

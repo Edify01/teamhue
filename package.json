@@ -1,7 +1,7 @@
 {
   "name": "teamhue",
   "private": true,
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "TeamHue — color-code conversations across Instagram, Google Voice and Gmail so your team always knows who is talking to who.",
   "type": "module",
   "scripts": {
