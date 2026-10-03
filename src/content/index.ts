@@ -1,4 +1,5 @@
 import { activeAdapter, type Adapter, type ThreadTarget } from './adapters';
+import type { ActiveThread } from './adapters/types';
 import { paint, reconcile, clearAll } from './painter';
 import { picker } from './picker';
 import { send, contextAlive, isContextInvalidated, type BroadcastMessage } from '@/shared/messaging';
@@ -85,7 +86,7 @@ const repaint = rafThrottle(() => {
   const stillPainted = new Set<HTMLElement>();
 
   for (const target of targets) {
-    const assignment = assignments.get(target.threadKey);
+    const assignment = lookup(target.threadKey, target.aliases);
     if (!assignment) continue;
     paint(target, assignment, settings);
     stillPainted.add(target.element);
@@ -97,9 +98,20 @@ const repaint = rafThrottle(() => {
 
 const repaintSoon = debounce(() => repaint(), 60);
 
+/** Assignment for a key, falling back to legacy/alternate keys for the same conversation. */
+function lookup(key: string, aliases?: string[]): AssignmentLite | undefined {
+  const direct = assignments.get(key);
+  if (direct) return direct;
+  for (const alias of aliases ?? []) {
+    const hit = assignments.get(alias);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 /* ----------------------------------------------------------------- active FAB */
 
-function currentThread(): { threadKey: string; label: string | null } | null {
+function currentThread(): ActiveThread | null {
   if (!adapter?.activeThread) return null;
   try {
     return adapter.activeThread();
@@ -123,14 +135,14 @@ function ensureFab(): HTMLButtonElement {
   return fab;
 }
 
-function updateFab(thread: { threadKey: string; label: string | null } | null) {
+function updateFab(thread: ActiveThread | null) {
   if (!thread || !enabledHere()) {
     fab?.remove();
     fab = null;
     return;
   }
   const el = ensureFab();
-  const current = assignments.get(thread.threadKey);
+  const current = lookup(thread.threadKey, thread.aliases);
   if (current) {
     el.dataset.thActive = '1';
     el.style.setProperty('--th-fab-color', current.color);
@@ -146,7 +158,7 @@ async function onFabClick(e: MouseEvent) {
   e.stopPropagation();
   const thread = currentThread();
   if (!thread || !adapter) return;
-  openPickerFor(thread.threadKey, thread.label, (e.currentTarget as HTMLElement).getBoundingClientRect());
+  openPickerFor(thread, (e.currentTarget as HTMLElement).getBoundingClientRect());
 }
 
 /* ---------------------------------------------------------------- interaction */
@@ -176,7 +188,7 @@ function onPageClick(e: MouseEvent) {
 
   e.preventDefault();
   e.stopPropagation();
-  openPickerFor(hit.threadKey, hit.label, hit.element.getBoundingClientRect());
+  openPickerFor(hit, hit.element.getBoundingClientRect());
 }
 
 /**
@@ -192,12 +204,28 @@ function onContextMenu(e: MouseEvent) {
 
   e.preventDefault();
   e.stopPropagation();
-  openPickerFor(hit.threadKey, hit.label, hit.element.getBoundingClientRect());
+  openPickerFor(hit, hit.element.getBoundingClientRect());
 }
 
-function openPickerFor(threadKey: string, label: string | null, anchor: DOMRect) {
+function openPickerFor(thread: ActiveThread, anchor: DOMRect) {
   if (!adapter) return;
-  const current = assignments.get(threadKey) ?? null;
+  const { threadKey, label } = thread;
+  const aliases = (thread.aliases ?? []).filter((a) => a !== threadKey);
+  const current = lookup(threadKey, aliases) ?? null;
+
+  // Remove colours stored under alternate keys so one conversation never ends
+  // up with two competing assignments.
+  const dropAliases = async () => {
+    for (const alias of aliases) {
+      if (!assignments.has(alias)) continue;
+      assignments.delete(alias);
+      try {
+        await send({ type: 'CLEAR_ASSIGNMENT', platform: adapter!.platform, threadKey: alias });
+      } catch {
+        /* best effort */
+      }
+    }
+  };
 
   picker.open({ threadKey, label, current }, members, anchor, {
     async onApply({ color, memberId, note }) {
@@ -219,12 +247,14 @@ function openPickerFor(threadKey: string, label: string | null, anchor: DOMRect)
         note,
         memberName: members.find((m) => m.id === memberId)?.display_name ?? null,
       });
+      await dropAliases();
       repaint();
       toast('Color saved and shared with your team');
     },
     async onClear() {
       await send({ type: 'CLEAR_ASSIGNMENT', platform: adapter!.platform, threadKey });
       assignments.delete(threadKey);
+      await dropAliases();
       repaint();
       toast('Color removed');
     },

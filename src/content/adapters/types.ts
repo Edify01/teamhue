@@ -12,6 +12,14 @@ export interface ThreadTarget {
   label: string | null;
   /** True when this is the open conversation's header rather than a list row. */
   isHeader?: boolean;
+  /** Older/alternate keys for the same conversation (checked if `threadKey` has no colour). */
+  aliases?: string[];
+}
+
+export interface ActiveThread {
+  threadKey: string;
+  label: string | null;
+  aliases?: string[];
 }
 
 export interface Adapter {
@@ -26,5 +34,5 @@ export interface Adapter {
    * Where to anchor the floating "paint" button for the *open* conversation.
    * Returning null simply hides the inline button on that page.
    */
-  activeThread?(): { threadKey: string; label: string | null } | null;
+  activeThread?(): ActiveThread | null;
 }
