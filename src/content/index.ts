@@ -1,7 +1,7 @@
 import { activeAdapter, type Adapter, type ThreadTarget } from './adapters';
 import { paint, reconcile, clearAll } from './painter';
 import { picker } from './picker';
-import { send, type BroadcastMessage } from '@/shared/messaging';
+import { send, contextAlive, isContextInvalidated, type BroadcastMessage } from '@/shared/messaging';
 import { DEFAULT_SETTINGS, type AssignmentLite, type Member, type Settings } from '@/shared/types';
 import { rafThrottle, debounce, errorMessage } from '@/shared/util';
 
@@ -23,6 +23,34 @@ let settings: Settings = DEFAULT_SETTINGS;
 let signedIn = false;
 let observer: MutationObserver | null = null;
 let fab: HTMLButtonElement | null = null;
+let dead = false;
+
+/**
+ * Tears this instance down for good.
+ *
+ * Reloading or updating the extension orphans the content scripts already
+ * running in open tabs — `chrome.runtime` throws "Extension context
+ * invalidated" on every call. Rather than log that error on every mutation,
+ * we remove our styling and go quiet. The freshly injected script (on the
+ * next page load) takes over cleanly.
+ */
+function shutdown() {
+  if (dead) return;
+  dead = true;
+  try {
+    observer?.disconnect();
+    observer = null;
+    clearAll();
+    fab?.remove();
+    fab = null;
+    picker.close?.();
+    document.removeEventListener('click', onPageClick, true);
+    window.removeEventListener('scroll', repaintSoon, true);
+    window.removeEventListener('resize', repaintSoon);
+  } catch {
+    /* page is already tearing down — nothing useful to do */
+  }
+}
 
 function enabledHere(): boolean {
   return Boolean(adapter && settings.enabled && settings.platforms[adapter.platform] && signedIn);
@@ -31,7 +59,13 @@ function enabledHere(): boolean {
 /* ------------------------------------------------------------------ painting */
 
 const repaint = rafThrottle(() => {
-  if (!adapter) return;
+  if (!adapter || dead) return;
+
+  // The extension was reloaded out from under us — stop cleanly.
+  if (!contextAlive()) {
+    shutdown();
+    return;
+  }
 
   if (!enabledHere()) {
     clearAll();
@@ -117,19 +151,47 @@ async function onFabClick(e: MouseEvent) {
 
 /* ---------------------------------------------------------------- interaction */
 
-/** Alt/Option + click any conversation row opens the picker for that row. */
-function onPageClick(e: MouseEvent) {
-  if (!e.altKey || !adapter || !enabledHere()) return;
+/** Resolves the conversation row under a pointer event, if any. */
+function rowUnder(e: MouseEvent): ThreadTarget | null {
+  if (!adapter || !enabledHere()) return null;
 
-  const path = e.composedPath();
   let targets: ThreadTarget[];
   try {
     targets = adapter.findThreads();
   } catch {
-    return;
+    return null;
   }
 
-  const hit = targets.find((t) => path.includes(t.element));
+  const path = e.composedPath();
+  const direct = targets.find((t) => path.includes(t.element));
+  if (direct) return direct;
+
+  // composedPath misses rows when the click lands on a node that was replaced
+  // mid-event (common in virtualized lists), so fall back to containment.
+  const node = e.target as Node | null;
+  return node ? targets.find((t) => t.element.contains(node)) ?? null : null;
+}
+
+/** Alt/Option + click any conversation row opens the picker for that row. */
+function onPageClick(e: MouseEvent) {
+  if (!e.altKey) return;
+  const hit = rowUnder(e);
+  if (!hit) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+  openPickerFor(hit.threadKey, hit.label, hit.element.getBoundingClientRect());
+}
+
+/**
+ * Right-click a conversation row to colour it.
+ *
+ * Alt+Click alone was undiscoverable — on an inbox with no assignments yet
+ * there was no visible way in, which made the extension look broken. The
+ * context menu is the affordance people reach for instinctively.
+ */
+function onContextMenu(e: MouseEvent) {
+  const hit = rowUnder(e);
   if (!hit) return;
 
   e.preventDefault();
@@ -310,6 +372,10 @@ async function boot() {
       signedIn: state.auth.status === 'signed-in',
     });
   } catch (err) {
+    if (isContextInvalidated(err)) {
+      shutdown();
+      return;
+    }
     console.warn('[TeamHue] could not load state:', errorMessage(err));
   }
 
@@ -325,6 +391,7 @@ async function boot() {
   });
 
   document.addEventListener('click', onPageClick, true);
+  document.addEventListener('contextmenu', onContextMenu, true);
   window.addEventListener('scroll', repaintSoon, { passive: true, capture: true });
   window.addEventListener('resize', repaintSoon, { passive: true });
 
@@ -335,6 +402,26 @@ async function boot() {
   // Virtualized lists settle asynchronously; a few extra passes guarantee the
   // first paint is complete even on a cold, slow load.
   [400, 1000, 2500].forEach((ms) => setTimeout(() => repaint(), ms));
+
+  // Diagnostic hook: run `__teamhue()` in the page console to see exactly what
+  // the adapter detects. Invaluable when a site changes its markup.
+  (window as unknown as Record<string, unknown>).__teamhue = () => {
+    const found = adapter?.findThreads() ?? [];
+    console.log('[TeamHue] platform:', adapter?.platform);
+    console.log('[TeamHue] signed in:', signedIn, '| enabled here:', enabledHere());
+    console.log('[TeamHue] rows detected:', found.length);
+    console.table(
+      found.slice(0, 20).map((t) => ({
+        key: t.threadKey,
+        label: t.label,
+        size: `${Math.round(t.element.getBoundingClientRect().width)}×${Math.round(
+          t.element.getBoundingClientRect().height,
+        )}`,
+      })),
+    );
+    console.log('[TeamHue] assignments loaded:', assignments.size);
+    return found;
+  };
 }
 
 // Start only on supported sites. Declared last so every binding above is

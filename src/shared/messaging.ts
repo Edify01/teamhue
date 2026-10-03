@@ -54,7 +54,30 @@ export interface BroadcastMessage {
   signedIn: boolean;
 }
 
+/**
+ * True while this script can still talk to its extension.
+ *
+ * After the extension is reloaded/updated, content scripts already injected in
+ * open tabs become orphaned: `chrome.runtime.id` goes undefined and every API
+ * call throws "Extension context invalidated". Checking this first lets callers
+ * shut down gracefully instead of throwing on every repaint.
+ */
+export function contextAlive(): boolean {
+  try {
+    return Boolean(chrome?.runtime?.id);
+  } catch {
+    return false;
+  }
+}
+
+/** Recognises the orphaned-context error regardless of how it surfaces. */
+export function isContextInvalidated(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return /Extension context invalidated|message port closed|receiving end does not exist/i.test(msg);
+}
+
 export async function send<T = unknown>(req: Request): Promise<T> {
+  if (!contextAlive()) throw new Error('Extension context invalidated.');
   const res = (await chrome.runtime.sendMessage(req)) as Response<T> | undefined;
   if (!res) throw new Error('No response from TeamHue background service.');
   if (!res.ok) throw new Error(res.error);
