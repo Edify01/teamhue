@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TeamHue — Conversation Color Coding",
   "short_name": "TeamHue",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Color-code conversations across Instagram, Google Voice and Gmail so your whole team instantly knows who is handling who.",
   "minimum_chrome_version": "114",
   "action": {

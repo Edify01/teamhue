@@ -39,28 +39,51 @@ function labelFor(anchor: HTMLElement): string | null {
 }
 
 /**
- * Instagram sometimes renders inbox rows as `div[role="button"]` instead of
- * anchors (newer inbox + optimistic updates). We handle both shapes so the
- * extension survives their A/B rollouts.
+ * Collects every element that identifies a conversation.
+ *
+ * Instagram ships several inbox variants concurrently (A/B rollouts), so we try
+ * anchors first, then data attributes, and never rely on generated class names.
  */
 function candidateAnchors(): Array<{ el: HTMLElement; id: string }> {
   const found: Array<{ el: HTMLElement; id: string }> = [];
+  const seen = new Set<string>();
+
+  const push = (el: HTMLElement, id: string) => {
+    // One entry per thread id; the first (outermost in document order) wins.
+    if (seen.has(id)) return;
+    seen.add(id);
+    found.push({ el, id });
+  };
 
   document.querySelectorAll<HTMLAnchorElement>('a[href*="/direct/t/"]').forEach((a) => {
     const id = threadIdFromHref(a.getAttribute('href'));
-    if (id) found.push({ el: a, id });
+    if (id) push(a, id);
   });
 
-  if (found.length === 0) {
-    document
-      .querySelectorAll<HTMLElement>('[data-thread-id], [data-testid*="thread"]')
-      .forEach((el) => {
-        const id = el.getAttribute('data-thread-id');
-        if (id && id.length > 1) found.push({ el, id });
-      });
-  }
+  document
+    .querySelectorAll<HTMLElement>('[data-thread-id], [data-testid*="thread"]')
+    .forEach((el) => {
+      const id = el.getAttribute('data-thread-id');
+      if (id && id.length > 1) push(el, id);
+    });
 
   return found;
+}
+
+/**
+ * True when the element is the currently-open conversation's own header link
+ * rather than an inbox row.
+ *
+ * We deliberately do NOT exclude `[role="dialog"]`: Instagram renders the whole
+ * messaging surface inside a dialog in several layouts, so that test threw away
+ * every single inbox row and the left-hand list never got painted.
+ */
+function isOpenThreadHeader(el: HTMLElement, id: string): boolean {
+  const active = location.pathname.match(THREAD_HREF)?.[1];
+  if (active !== id) return false;
+  // The inbox row for the open thread still lives in the list; only treat this
+  // element as the header when it sits outside any list-like container.
+  return !el.closest('[role="list"], [role="listbox"], [role="grid"], ul');
 }
 
 export const instagramAdapter: Adapter = {
@@ -74,12 +97,15 @@ export const instagramAdapter: Adapter = {
     const out: ThreadTarget[] = [];
 
     for (const { el, id } of candidateAnchors()) {
-      // Ignore links inside the open conversation pane, which would otherwise
-      // paint the message area rather than an inbox row.
-      if (el.closest('[role="dialog"]')) continue;
+      if (isOpenThreadHeader(el, id)) continue;
 
       const row = expandToRow(el);
-      if (!row || row.getBoundingClientRect().height === 0) continue;
+      if (!row) continue;
+
+      // Skip genuinely invisible rows, but tolerate ones that are merely
+      // scrolled out of view (height is still non-zero for those).
+      const rect = row.getBoundingClientRect();
+      if (rect.height === 0 || rect.width === 0) continue;
 
       out.push({
         element: row,
@@ -92,10 +118,13 @@ export const instagramAdapter: Adapter = {
   },
 
   observeRoots() {
-    // The inbox list lives under the main region; observing it instead of the
-    // whole body dramatically reduces mutation noise from the message pane.
-    const main = document.querySelector('main') ?? document.querySelector('[role="main"]');
-    return main ? [main] : [];
+    // Observe the messaging surface rather than the whole body to cut mutation
+    // noise. `main` is absent in the dialog-based layout, so fall back widely.
+    const root =
+      document.querySelector('[role="main"]') ??
+      document.querySelector('main') ??
+      document.querySelector('[role="dialog"]');
+    return root ? [root] : [];
   },
 
   activeThread() {

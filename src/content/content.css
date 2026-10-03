@@ -41,6 +41,26 @@ tr.th-painted > td:first-child {
   box-shadow: inset var(--th-bar-width, 4px) 0 0 0 var(--th-color);
 }
 
+/* Instagram (and other app-shell UIs) give inner wrappers their own opaque
+   background, which paints over the row wash and makes the tint invisible.
+   Neutralising the immediate wrappers lets our colour show through, while
+   leaving avatars, images and badges untouched. */
+.th-painted > div,
+.th-painted > div > div,
+.th-painted > a,
+.th-painted > a > div {
+  background-color: transparent !important;
+}
+
+/* Belt-and-braces: an inset shadow spanning the row renders even when a child
+   background still wins, so the user always gets visible feedback. */
+.th-painted {
+  box-shadow: inset 0 0 0 9999px var(--th-wash);
+}
+tr.th-painted {
+  box-shadow: none;
+}
+
 /* Initials chip */
 .th-chip {
   position: absolute !important;
