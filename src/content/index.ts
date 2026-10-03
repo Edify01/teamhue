@@ -155,12 +155,8 @@ async function onFabClick(e: MouseEvent) {
 function rowUnder(e: MouseEvent): ThreadTarget | null {
   if (!adapter || !enabledHere()) return null;
 
-  let targets: ThreadTarget[];
-  try {
-    targets = adapter.findThreads();
-  } catch {
-    return null;
-  }
+  const targets = safeFindThreads();
+  if (!targets.length) return null;
 
   const path = e.composedPath();
   const direct = targets.find((t) => path.includes(t.element));
@@ -403,25 +399,69 @@ async function boot() {
   // first paint is complete even on a cold, slow load.
   [400, 1000, 2500].forEach((ms) => setTimeout(() => repaint(), ms));
 
-  // Diagnostic hook: run `__teamhue()` in the page console to see exactly what
-  // the adapter detects. Invaluable when a site changes its markup.
-  (window as unknown as Record<string, unknown>).__teamhue = () => {
-    const found = adapter?.findThreads() ?? [];
-    console.log('[TeamHue] platform:', adapter?.platform);
-    console.log('[TeamHue] signed in:', signedIn, '| enabled here:', enabledHere());
-    console.log('[TeamHue] rows detected:', found.length);
+  // Diagnostic. Content scripts run in an isolated world, so this is NOT on the
+  // page's `window` — in DevTools you must switch the console context dropdown
+  // from `top` to `TeamHue` to call it. Because that's easy to miss, we also
+  // print a summary automatically on boot (see below).
+  (window as unknown as Record<string, unknown>).__teamhue = diagnose;
+
+  // Auto-report once the list has settled, so the common failure modes
+  // (no rows detected / not signed in) are visible without any console gymnastics.
+  setTimeout(() => {
+    if (dead) return;
+    const found = safeFindThreads();
+    if (found.length === 0 || !signedIn) diagnose();
+  }, 3000);
+}
+
+/** Row lookup that never throws, for diagnostics and event handlers. */
+function safeFindThreads(): ThreadTarget[] {
+  try {
+    return adapter?.findThreads() ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Prints everything needed to tell detection / auth / painting failures apart. */
+function diagnose(): ThreadTarget[] {
+  const found = safeFindThreads();
+  console.log(
+    `%c TeamHue %c v${chrome.runtime?.getManifest?.().version ?? '?'} diagnostics`,
+    'background:#6366f1;color:#fff;border-radius:3px;padding:1px 4px',
+    'color:inherit',
+  );
+  console.log('platform        :', adapter?.platform ?? '(no adapter — unsupported page)');
+  console.log('url             :', location.href);
+  console.log('signed in       :', signedIn);
+  console.log('enabled here    :', enabledHere());
+  console.log('assignments     :', assignments.size);
+  console.log('rows detected   :', found.length);
+
+  if (found.length) {
     console.table(
-      found.slice(0, 20).map((t) => ({
-        key: t.threadKey,
-        label: t.label,
-        size: `${Math.round(t.element.getBoundingClientRect().width)}×${Math.round(
-          t.element.getBoundingClientRect().height,
-        )}`,
-      })),
+      found.slice(0, 20).map((t) => {
+        const r = t.element.getBoundingClientRect();
+        const painted = t.element.classList.contains('th-painted');
+        return {
+          key: t.threadKey,
+          label: t.label,
+          size: `${Math.round(r.width)}×${Math.round(r.height)}`,
+          hasColor: assignments.has(t.threadKey),
+          painted,
+        };
+      }),
     );
-    console.log('[TeamHue] assignments loaded:', assignments.size);
-    return found;
-  };
+  } else if (adapter?.platform === 'instagram') {
+    // Narrow down *why* nothing matched on Instagram specifically.
+    console.warn(
+      'No rows matched. Raw anchor count:',
+      document.querySelectorAll('a[href*="/direct/t/"]').length,
+    );
+  }
+
+  if (!signedIn) console.warn('Not signed in — open the TeamHue popup and sign in first.');
+  return found;
 }
 
 // Start only on supported sites. Declared last so every binding above is
