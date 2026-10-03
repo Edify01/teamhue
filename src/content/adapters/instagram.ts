@@ -176,18 +176,20 @@ function conversationPane(): HTMLElement | null {
   return null;
 }
 
-/** Name shown in the open conversation's header (fallback when no click seen). */
-function headerName(pane: HTMLElement | null): string | null {
-  if (!pane) return null;
+/** All short text lines in the open conversation's header area. */
+function headerTexts(pane: HTMLElement | null): string[] {
+  if (!pane) return [];
   const top = pane.getBoundingClientRect().top;
-  const links = pane.querySelectorAll<HTMLElement>('a[href^="/"]:not([href*="/direct/"]), h1, h2, span[dir="auto"]');
-  for (const el of Array.from(links)) {
+  const out: string[] = [];
+  const els = pane.querySelectorAll<HTMLElement>('a[href^="/"]:not([href*="/direct/"]), h1, h2, span');
+  for (const el of Array.from(els)) {
     const r = el.getBoundingClientRect();
-    if (r.top - top > 110) continue;
+    if (r.height === 0 || r.top - top > 110) continue;
     const text = cleanLabel(el.textContent, 80);
-    if (text && !TIMESTAMP.test(text)) return text;
+    if (text && !TIMESTAMP.test(text) && !out.includes(text)) out.push(text);
+    if (out.length >= 12) break;
   }
-  return null;
+  return out;
 }
 
 /* ------------------------------------------------------------------- adapter */
@@ -239,15 +241,32 @@ export const instagramAdapter: Adapter = {
     const id = threadIdFromPath(location.pathname);
     if (!id) return null;
 
+    // The key MUST be the display name exactly as the left-hand box shows it,
+    // otherwise a colour set from the open conversation never reaches the box.
+    // The header often shows the @username instead, so it is only used to pick
+    // the matching left-hand box, never as the key itself.
     if (lastClicked && Date.now() - lastClicked.at < 5000) {
       remember(id, lastClicked.name);
       lastClicked = null;
     }
 
-    const name = idToName[id] ?? headerName(conversationPane());
-    if (name && !idToName[id]) remember(id, name);
+    let name: string | null = idToName[id] ?? null;
 
-    if (!name) return { threadKey: `ig:${id}`, label: null };
+    if (!name) {
+      const rowNames = inboxRows()
+        .map((r) => nameOf(r))
+        .filter((n): n is string => Boolean(n));
+      const header = headerTexts(conversationPane());
+      name =
+        rowNames.find((n) => header.some((h) => normalizeName(h) === normalizeName(n))) ??
+        rowNames.find((n) =>
+          header.some((h) => normalizeName(h).includes(normalizeName(n)) && n.length > 2),
+        ) ??
+        null;
+      if (name) remember(id, name);
+    }
+
+    if (!name) return { threadKey: `ig:${id}`, label: headerTexts(conversationPane())[0] ?? null };
     return { threadKey: nameKey(name), label: name, aliases: [`ig:${id}`] };
   },
 };

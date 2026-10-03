@@ -61,6 +61,23 @@ tr.th-painted {
   box-shadow: none;
 }
 
+/* Colour overlay drawn ON TOP of the row's contents. Instagram's inner
+   wrappers set their own backgrounds that cover anything painted underneath,
+   so the tint goes in a click-through layer above them instead. Text and
+   avatars stay readable because the overlay is translucent. */
+.th-painted:not(tr)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--th-wash);
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+}
+.th-painted:not(tr):hover::after {
+  background: var(--th-wash-hover);
+}
+
 /* Initials chip */
 .th-chip {
   position: absolute !important;
