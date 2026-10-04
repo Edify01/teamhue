@@ -1,74 +1,260 @@
 import { normalizePhone } from '@/shared/util';
-import type { Adapter, ThreadTarget } from './types';
-import { expandToRow, dedupe } from './dom';
+import type { Adapter, ActiveThread, ThreadTarget } from './types';
+import { cleanLabel } from './dom';
 
 /**
  * Google Voice adapter.
  *
- * Google Voice is the friendliest of the three: it is an Angular app with
- * stable custom element names (`gv-thread-item`, `gv-conversation-list`) and it
- * exposes phone numbers directly. We key threads on the normalized E.164 number
- * so `(661) 555-0134` and `+16615550134` resolve to the same color for everyone.
+ * A conversation is identified by WHO it is with — never by message content.
+ *
+ *   • List boxes live in the left-hand scrolling conversation list. Message
+ *     bubbles, call logs and dates in the open conversation are outside that
+ *     list and can never be coloured.
+ *   • Key = the contact line at the top of the box (first text line):
+ *       phone number → `gv:+16615550134` (E.164, so every format matches)
+ *       saved name   → `gv:name:jane doe`
+ *     The message preview below it is ignored entirely.
+ *   • The open conversation's id comes from the URL (`itemId=t.+1661…`).
+ *     When you open a conversation we remember which box it belongs to, so the
+ *     paintbrush and the list always share one colour.
  */
 
-const PHONE_TEXT = /(\+?\d[\d\s().-]{6,}\d)/;
+const MAP_KEY = 'teamhue:gv-thread-keys:v1';
+const MAX_ROW_HEIGHT = 140;
+const MIN_ROW_HEIGHT = 36;
 
-function keyFromPhone(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const phone = normalizePhone(raw);
-  return phone ? `gv:${phone}` : null;
+/** Elements that belong to the OPEN conversation, never to the list. */
+const CONVERSATION_PANE =
+  'gv-message-list, gv-text-message-item, gv-message-item, gv-call-item, gv-voicemail-item, ' +
+  'gv-message-entry, gv-conversation-header, [gv-test-id="message-list"]';
+
+/** Elements that mark a conversation row in known GV markup versions. */
+const ROW_SEEDS =
+  'gv-thread-item, gv-thread-item-list-item, [gv-thread-id], [data-thread-id], ' +
+  'a[href*="itemId="], [role="listitem"], [role="option"], [role="row"]';
+
+const TIME_OR_META =
+  /^(\d{1,2}:\d{2}\s*(am|pm)?|\d+\s*(m|min|h|hr|d|w)|now|yesterday|today|mon|tue|wed|thu|fri|sat|sun|[a-z]{3}\s\d{1,2}|\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d+)$/i;
+
+/* ------------------------------------------------------------------ helpers */
+
+function textLines(el: HTMLElement, limit = 6): string[] {
+  const lines: string[] = [];
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) =>
+      (n.parentElement?.closest('[aria-hidden="true"], .cdk-visually-hidden, style, script') ?? null)
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  });
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    const text = node.textContent?.replace(/\s+/g, ' ').trim();
+    if (!text || text === '·' || text === ',') continue;
+    if (lines[lines.length - 1] !== text) lines.push(text);
+    if (lines.length >= limit) break;
+  }
+  return lines;
 }
 
-/** Extracts the best identifier from a thread row. */
-function identify(row: HTMLElement): { key: string; label: string | null } | null {
-  // 1. Angular routerLink / href often contains the conversation id.
-  const anchor = row.querySelector<HTMLAnchorElement>('a[href*="/messages/"], a[href*="/calls/"]');
-  const href = anchor?.getAttribute('href') ?? '';
-
-  // 2. aria-label on the row usually reads "Conversation with Jane Doe".
-  const aria =
-    row.getAttribute('aria-label') ??
-    row.querySelector('[aria-label]')?.getAttribute('aria-label') ??
-    '';
-
-  const text = row.textContent ?? '';
-
-  // Prefer an explicit phone number anywhere in the row.
-  const phoneMatch = (aria + ' ' + text).match(PHONE_TEXT);
-  const phoneKey = keyFromPhone(phoneMatch?.[1]);
-
-  // Derive a readable label: the contact name if present, else the number.
-  let label: string | null = null;
-  const nameEl = row.querySelector<HTMLElement>(
-    '.gv-thread-item-name, [class*="thread-item-name"], [class*="contact-name"]',
+/**
+ * The contact line of a box: its first meaningful text line.
+ * GV lays a row out as: [contact name or number] [time] / [preview]. The
+ * preview is always after the contact line, so it is never used.
+ */
+function contactOf(row: HTMLElement): string | null {
+  // Explicit name elements in known GV versions take priority.
+  const explicit = row.querySelector<HTMLElement>(
+    '[gv-test-id="conversation-title"], [class*="participants"], [class*="contact-name"], [class*="thread-item-name"]',
   );
-  if (nameEl?.textContent?.trim()) {
-    label = nameEl.textContent.trim().slice(0, 120);
-  } else if (aria) {
-    label = aria.replace(/^conversation with\s*/i, '').trim().slice(0, 120) || null;
-  } else if (phoneMatch) {
-    label = phoneMatch[1].trim();
+  const fromExplicit = cleanLabel(explicit?.textContent, 100);
+  if (fromExplicit) return fromExplicit;
+
+  for (const line of textLines(row)) {
+    const t = cleanLabel(line, 100);
+    if (!t || TIME_OR_META.test(t)) continue;
+    if (/^(you|me):/i.test(t)) continue;
+    if (/^(unread|missed call|voicemail|draft)$/i.test(t)) continue;
+    return t;
   }
-
-  if (phoneKey) return { key: phoneKey, label };
-
-  // Fallback: a conversation id embedded in the link.
-  const idMatch = href.match(/\/(?:messages|calls)\/([A-Za-z0-9_@.%-]+)/);
-  if (idMatch) return { key: `gv:id:${decodeURIComponent(idMatch[1])}`, label };
-
-  // Last resort: a group thread keyed on its stable label.
-  if (label) return { key: `gv:name:${label.toLowerCase()}`, label };
-
   return null;
 }
 
-const ROW_SELECTOR = [
-  'gv-thread-item',
-  'gv-annotation',
-  '[gv-id="thread-item"]',
-  'div[role="listitem"]',
-  'li[role="listitem"]',
-].join(',');
+/** Turns a contact line into a stable key: phone → E.164, else lowercased name. */
+function keyForContact(contact: string): string {
+  const looksLikePhone = /^[+()\d\s.-]{7,}$/.test(contact);
+  const phone = looksLikePhone ? normalizePhone(contact) : null;
+  if (phone) return `gv:${phone}`;
+  return `gv:name:${contact.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase()}`;
+}
+
+/** Conversation id from a URL/href: `itemId=t.%2B16615550134` → `t.+16615550134`. */
+function itemIdFrom(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const m = url.match(/[?&#]itemId=([^&#]+)/);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
+/** If the conversation id embeds a single phone number, its E.164 key. */
+function keyFromItemId(itemId: string): string | null {
+  const m = itemId.match(/^t\.(\+?\d{7,15})$/);
+  const phone = m ? normalizePhone(m[1]) : null;
+  return phone ? `gv:${phone}` : null;
+}
+
+/* ------------------------------------------------------- id → row key map */
+
+function loadMap(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(MAP_KEY) ?? '{}') as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+let idToKey: Record<string, string> = loadMap();
+
+function remember(itemId: string, key: string) {
+  if (!itemId || !key || idToKey[itemId] === key) return;
+  idToKey[itemId] = key;
+  try {
+    localStorage.setItem(MAP_KEY, JSON.stringify(idToKey));
+  } catch {
+    /* storage blocked */
+  }
+}
+
+function aliasesFor(key: string): string[] {
+  return Object.keys(idToKey)
+    .filter((id) => idToKey[id] === key)
+    .map((id) => `gv:id:${id}`);
+}
+
+/* ------------------------------------------------------------ the list */
+
+let cachedList: HTMLElement | null = null;
+
+function isScroller(el: HTMLElement): boolean {
+  const oy = getComputedStyle(el).overflowY;
+  return (oy === 'auto' || oy === 'scroll') && el.getBoundingClientRect().height > 150;
+}
+
+/** The left-hand conversation list: the scroll container holding the most row seeds. */
+function threadList(): HTMLElement | null {
+  if (cachedList?.isConnected && cachedList.getBoundingClientRect().height > 150) return cachedList;
+  cachedList = null;
+
+  const named = document.querySelector<HTMLElement>('gv-thread-list, gv-conversation-list');
+  const votes = new Map<HTMLElement, number>();
+  const maxRight = window.innerWidth * 0.65;
+
+  for (const seed of Array.from(document.querySelectorAll<HTMLElement>(ROW_SEEDS))) {
+    if (seed.closest(CONVERSATION_PANE)) continue;
+    const r = seed.getBoundingClientRect();
+    if (r.height === 0 || r.right > maxRight + 4) continue;
+    let node = seed.parentElement;
+    while (node && node !== document.body) {
+      if (isScroller(node)) {
+        votes.set(node, (votes.get(node) ?? 0) + 1);
+        break;
+      }
+      node = node.parentElement;
+    }
+  }
+
+  let best: HTMLElement | null = null;
+  let bestVotes = 0;
+  for (const [el, n] of votes) {
+    const bonus = named && (el.contains(named) || named.contains(el)) ? 1000 : 0;
+    if (n + bonus > bestVotes) {
+      best = el;
+      bestVotes = n + bonus;
+    }
+  }
+  if (!best && named) best = named;
+  cachedList = best;
+  return best;
+}
+
+/** From any element inside a list box, the full box (or null if not in the list). */
+function boxFrom(start: Element | null, list = threadList()): HTMLElement | null {
+  if (!list || !start || start === list || !list.contains(start)) return null;
+  if (start.closest(CONVERSATION_PANE)) return null;
+
+  // Known row element wins outright.
+  const known = start.closest<HTMLElement>('gv-thread-item, gv-thread-item-list-item');
+  let best: HTMLElement | null = known && list.contains(known) ? known : null;
+
+  if (!best) {
+    const listWidth = list.getBoundingClientRect().width;
+    let node: HTMLElement | null = start instanceof HTMLElement ? start : start.parentElement;
+    while (node && node !== list) {
+      const r = node.getBoundingClientRect();
+      if (r.height > MAX_ROW_HEIGHT) break;
+      if (r.height >= MIN_ROW_HEIGHT && r.width >= listWidth * 0.6) best = node;
+      node = node.parentElement;
+    }
+  }
+
+  if (!best || best.getBoundingClientRect().height === 0) return null;
+  return contactOf(best) ? best : null;
+}
+
+function listRows(): HTMLElement[] {
+  const list = threadList();
+  if (!list) return [];
+  const found = new Set<HTMLElement>();
+  for (const seed of Array.from(list.querySelectorAll<HTMLElement>(ROW_SEEDS))) {
+    const box = boxFrom(seed, list);
+    if (box) found.add(box);
+  }
+  const rows = Array.from(found);
+  return rows.filter((b) => !rows.some((o) => o !== b && o.contains(b)));
+}
+
+function rowKey(row: HTMLElement): { key: string; label: string } | null {
+  // A row that links to its conversation id lets us learn the mapping for free.
+  const href =
+    row.closest('a')?.getAttribute('href') ??
+    row.querySelector('a[href*="itemId="]')?.getAttribute('href');
+  const contact = contactOf(row);
+  if (!contact) return null;
+  const key = keyForContact(contact);
+  const id = itemIdFrom(href);
+  if (id) remember(id, key);
+  return { key, label: contact };
+}
+
+function toTarget(row: HTMLElement): ThreadTarget | null {
+  const k = rowKey(row);
+  if (!k) return null;
+  return { element: row, threadKey: k.key, label: k.label, aliases: aliasesFor(k.key) };
+}
+
+/* ----------------------------------------------- remember which box opened */
+
+let lastClicked: { key: string; at: number } | null = null;
+
+function noteClick(e: Event) {
+  const box = boxFrom(e.target as Element);
+  const k = box ? rowKey(box) : null;
+  if (k) lastClicked = { key: k.key, at: Date.now() };
+}
+
+if (location.hostname === 'voice.google.com') {
+  document.addEventListener('pointerdown', noteClick, true);
+  document.addEventListener('click', noteClick, true);
+}
+
+function isSelected(row: HTMLElement): boolean {
+  const sel = '[aria-selected="true"], [aria-current="page"], [aria-current="true"], .selected, .is-selected';
+  return row.matches(sel) || !!row.querySelector(sel) || !!row.closest(sel);
+}
+
+/* ------------------------------------------------------------------ adapter */
 
 export const googleVoiceAdapter: Adapter = {
   platform: 'googlevoice',
@@ -79,50 +265,59 @@ export const googleVoiceAdapter: Adapter = {
 
   findThreads(): ThreadTarget[] {
     const out: ThreadTarget[] = [];
-
-    const rows = document.querySelectorAll<HTMLElement>(ROW_SELECTOR);
-    for (const row of Array.from(rows)) {
-      // Skip containers that merely wrap other rows.
-      if (row.querySelector(ROW_SELECTOR)) continue;
-
-      const found = identify(row);
-      if (!found) continue;
-
-      // Expand to the full contact box so the whole row tints, not just the
-      // inner text block.
-      const element = expandToRow(row);
-      if (!element || element.getBoundingClientRect().height === 0) continue;
-
-      out.push({ element, threadKey: found.key, label: found.label });
+    const used = new Set<string>();
+    for (const row of listRows()) {
+      const t = toTarget(row);
+      if (!t || used.has(t.threadKey)) continue;
+      used.add(t.threadKey);
+      out.push(t);
     }
+    return out;
+  },
 
-    return dedupe(out);
+  threadAt(el: Element): ThreadTarget | null {
+    const box = boxFrom(el);
+    return box ? toTarget(box) : null;
   },
 
   observeRoots() {
-    const list = document.querySelector('gv-conversation-list, gv-thread-list, [role="list"]');
-    return list ? [list] : [];
+    return [document.body];
   },
 
-  activeThread() {
-    // The open conversation's recipient appears in the message header.
-    const header = document.querySelector<HTMLElement>(
-      'gv-message-list-header, [class*="conversation-header"], header',
-    );
-    if (!header) return null;
+  activeThread(): ActiveThread | null {
+    const itemId = itemIdFrom(location.href);
+    if (!itemId) return null;
 
-    const text = header.textContent ?? '';
-    const aria = header.getAttribute('aria-label') ?? '';
-    const phoneMatch = (aria + ' ' + text).match(PHONE_TEXT);
-    const key = keyFromPhone(phoneMatch?.[1]);
+    const rows = listRows();
+    const byKey = (key: string) => rows.find((r) => rowKey(r)?.key === key) ?? null;
 
-    const nameEl = header.querySelector<HTMLElement>('[class*="recipient"], [class*="name"]');
-    const label =
-      nameEl?.textContent?.trim().slice(0, 120) ??
-      (phoneMatch ? phoneMatch[1].trim() : null);
+    // 1. The box GV marks as selected.
+    let row = rows.find(isSelected) ?? null;
+    // 2. The box you just clicked to open this conversation.
+    if (!row && lastClicked && Date.now() - lastClicked.at < 8000) row = byKey(lastClicked.key);
+    // 3. Previously learned for this conversation id.
+    if (!row && idToKey[itemId]) row = byKey(idToKey[itemId]);
+    // 4. The id itself is a phone number shown in the list.
+    const phoneKey = keyFromItemId(itemId);
+    if (!row && phoneKey) row = byKey(phoneKey);
 
-    if (key) return { threadKey: key, label };
-    if (label) return { threadKey: `gv:name:${label.toLowerCase()}`, label };
-    return null;
+    let key: string | null = null;
+    let label: string | null = null;
+    if (row) {
+      const k = rowKey(row);
+      if (k) ({ key, label } = k);
+    }
+    if (!key && idToKey[itemId]) key = idToKey[itemId];
+    if (!key && phoneKey) key = phoneKey;
+    if (!key) return null; // can't tie to a list box → hide the paintbrush
+
+    remember(itemId, key);
+    const aliases = [`gv:id:${itemId}`];
+    if (phoneKey && phoneKey !== key) aliases.push(phoneKey);
+    return { threadKey: key, label: label ?? key.replace(/^gv:(name:)?/, ''), aliases };
   },
 };
+
+window.addEventListener('storage', (e) => {
+  if (e.key === MAP_KEY) idToKey = loadMap();
+});
