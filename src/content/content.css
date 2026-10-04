@@ -122,12 +122,16 @@ tr.th-painted .th-chip {
   border: none;
   border-radius: 14px;
   cursor: pointer;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background:
+    radial-gradient(circle at 50% 30%, rgba(34, 211, 238, 0.55), transparent 55%),
+    radial-gradient(circle at 72% 68%, rgba(167, 139, 250, 0.55), transparent 55%),
+    radial-gradient(circle at 28% 68%, rgba(251, 113, 133, 0.5), transparent 55%),
+    linear-gradient(135deg, #2563eb, #1e3a8a);
   color: #fff;
   display: grid;
   place-items: center;
   box-shadow:
-    0 10px 24px -6px rgba(99, 102, 241, 0.5),
+    0 10px 24px -6px rgba(37, 99, 235, 0.5),
     0 4px 10px -4px rgba(15, 18, 25, 0.25);
   transition:
     transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -141,7 +145,7 @@ tr.th-painted .th-chip {
   transform: translateY(-2px) scale(1.04);
   opacity: 1;
   box-shadow:
-    0 16px 32px -8px rgba(99, 102, 241, 0.58),
+    0 16px 32px -8px rgba(37, 99, 235, 0.6),
     0 6px 14px -6px rgba(15, 18, 25, 0.3);
 }
 
@@ -204,10 +208,10 @@ tr.th-painted .th-chip {
 }
 
 #th-toast .th-toast-dot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: #10b981;
+  background: conic-gradient(#22d3ee, #a78bfa, #fb7185, #22d3ee);
   flex: 0 0 auto;
 }
 

@@ -4,9 +4,9 @@
    ========================================================================== */
 
 :root {
-  --th-indigo: #6366f1;
-  --th-violet: #8b5cf6;
-  --th-grad: linear-gradient(135deg, #6366f1, #8b5cf6);
+  --th-indigo: #2563eb;
+  --th-violet: #7c3aed;
+  --th-grad: linear-gradient(135deg, #2563eb, #1e40af);
 
   --bg: #ffffff;
   --bg-soft: #f7f8fa;
@@ -165,17 +165,40 @@ h3 {
 }
 
 .brand-mark {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  background: var(--th-grad);
-  display: grid;
-  place-items: center;
-  color: #fff;
-  font-weight: 800;
-  font-size: 14px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
-  box-shadow: 0 2px 8px -2px rgba(99, 102, 241, 0.5);
+  display: block;
+  line-height: 0;
+  border-radius: 9px;
+  box-shadow: 0 4px 14px -4px rgba(37, 99, 235, 0.55);
+}
+.brand-mark svg { width: 100%; height: 100%; display: block; }
+
+/* Signature motion: the three teammate orbs breathe apart and back together. */
+.th-logo circle {
+  transform-box: view-box;
+  transform-origin: 32px 32px;
+  transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.brand:hover .th-logo circle:nth-child(1),
+.brand-mark:hover .th-logo circle:nth-child(1) { transform: translate(0, -2.4px); }
+.brand:hover .th-logo circle:nth-child(2),
+.brand-mark:hover .th-logo circle:nth-child(2) { transform: translate(2.1px, 1.2px); }
+.brand:hover .th-logo circle:nth-child(3),
+.brand-mark:hover .th-logo circle:nth-child(3) { transform: translate(-2.1px, 1.2px); }
+
+.th-logo .th-logo-orbs {
+  transform-origin: 32px 32px;
+  animation: th-logo-spin 24s linear infinite;
+  animation-play-state: paused;
+}
+.brand:hover .th-logo .th-logo-orbs,
+.brand-mark:hover .th-logo .th-logo-orbs { animation-play-state: running; }
+@keyframes th-logo-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .th-logo circle, .th-logo .th-logo-orbs { transition: none; animation: none; }
 }
 
 /* ---------------------------------------------------------------- controls */

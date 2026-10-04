@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
 import { PALETTE, initialsOf, readableTextOn } from '@/shared/color';
+import { logoSvg } from '@/shared/logo';
 
 export function Brand({ subtitle }: { subtitle?: string }) {
   return (
     <div className="brand">
-      <div className="brand-mark">T</div>
+      <div className="brand-mark" dangerouslySetInnerHTML={{ __html: logoSvg(32) }} />
       <div className="grow">
         <div style={{ fontWeight: 650, fontSize: 14, lineHeight: 1.2 }}>TeamHue</div>
         {subtitle && <div className="tiny muted truncate">{subtitle}</div>}

@@ -2,8 +2,8 @@
 /**
  * Generates TeamHue's PNG icons with zero dependencies.
  *
- * Writes real, spec-compliant PNGs by hand: we rasterize a rounded-square
- * gradient badge with a "T" glyph into an RGBA buffer, then wrap it in the
+ * Writes real, spec-compliant PNGs by hand: we rasterize the TeamHue logo
+ * (blue tile + three overlapping colour orbs) into an RGBA buffer, then wrap it in the
  * minimal PNG chunk structure (IHDR / IDAT / IEND) using Node's zlib.
  */
 import { deflateSync } from 'node:zlib';
@@ -83,71 +83,66 @@ function sdRoundRect(px, py, halfW, halfH, r) {
   return Math.sqrt(ax * ax + ay * ay) + Math.min(Math.max(qx, qy), 0) - r;
 }
 
-/** Is this point inside the letter "T"? Coordinates are 0..1 within the badge. */
-function insideT(u, v) {
-  const barTop = 0.26;
-  const barBottom = 0.38;
-  const barLeft = 0.22;
-  const barRight = 0.78;
-  const stemLeft = 0.425;
-  const stemRight = 0.575;
-  const stemBottom = 0.76;
+/* Logo geometry (64×64 canvas) — keep in sync with src/shared/logo.ts. */
+const TILE_FROM = [0x25, 0x63, 0xeb];
+const TILE_TO = [0x1e, 0x3a, 0x8a];
+const ORB_R = 13;
+const ORB_ALPHA = 0.92;
+const ORBS = [
+  { cx: 32, cy: 23.5, c: [0x22, 0xd3, 0xee] },
+  { cx: 39.4, cy: 36.3, c: [0xa7, 0x8b, 0xfa] },
+  { cx: 24.6, cy: 36.3, c: [0xfb, 0x71, 0x85] },
+];
 
-  const inBar = v >= barTop && v <= barBottom && u >= barLeft && u <= barRight;
-  const inStem = v >= barTop && v <= stemBottom && u >= stemLeft && u <= stemRight;
-  return inBar || inStem;
-}
+/** Screen blend: 1 - (1-a)(1-b), channels in 0..255. */
+const screen = (base, top) => 255 - ((255 - base) * (255 - top)) / 255;
 
 function renderIcon(size) {
   const buf = Buffer.alloc(size * size * 4);
-  const ss = 3; // 3x3 supersampling for smooth edges
-  const half = size / 2;
-  const radius = size * 0.22;
-  const pad = size * 0.045;
+  const ss = 4; // supersampling for smooth edges
+  const k = 64 / size; // pixel → logo units
 
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
-      let r = 0;
-      let g = 0;
-      let b = 0;
-      let a = 0;
+      let r = 0, g = 0, b = 0, a = 0;
 
       for (let sy = 0; sy < ss; sy += 1) {
         for (let sx = 0; sx < ss; sx += 1) {
-          const px = x + (sx + 0.5) / ss;
-          const py = y + (sy + 0.5) / ss;
+          const u = (x + (sx + 0.5) / ss) * k;
+          const v = (y + (sy + 0.5) / ss) * k;
 
-          const d = sdRoundRect(px - half, py - half, half - pad, half - pad, radius);
-          // Antialias across roughly one pixel.
-          const cover = clamp01(0.5 - d);
+          const d = sdRoundRect(u - 32, v - 32, 32, 32, 16);
+          const cover = clamp01(0.5 - d / k);
           if (cover <= 0) continue;
 
-          // Diagonal indigo → violet gradient.
-          const t = clamp01((px / size + py / size) / 2);
-          let cr = lerp(0x63, 0x8b, t);
-          let cg = lerp(0x66, 0x5c, t);
-          let cb = lerp(0xf1, 0xf6, t);
+          const t = clamp01((u + v) / 128);
+          let col = [0, 1, 2].map((i) => lerp(TILE_FROM[i], TILE_TO[i], t));
 
-          // The "T" glyph, knocked out in white.
-          const u = px / size;
-          const v = py / size;
-          if (insideT(u, v)) {
-            cr = 255;
-            cg = 255;
-            cb = 255;
+          // Orbs form an isolated group: they screen-blend with EACH OTHER
+          // (overlaps glow toward white) but sit normally on the blue tile,
+          // so each keeps its pure colour. Matches the SVG exactly.
+          let gc = [0, 0, 0];
+          let ga = 0;
+          for (const o of ORBS) {
+            const dist = Math.hypot(u - o.cx, v - o.cy) - ORB_R;
+            const oc = clamp01(0.5 - dist / k) * ORB_ALPHA;
+            if (oc <= 0) continue;
+            const mixed = o.c.map((c, i) => (1 - ga) * c + ga * screen(gc[i], c));
+            const na = oc + ga * (1 - oc);
+            gc = mixed.map((m, i) => (oc * m + (1 - oc) * ga * gc[i]) / na);
+            ga = na;
           }
+          if (ga > 0) col = col.map((base, i) => base * (1 - ga) + gc[i] * ga);
 
-          r += cr * cover;
-          g += cg * cover;
-          b += cb * cover;
+          r += col[0] * cover;
+          g += col[1] * cover;
+          b += col[2] * cover;
           a += cover;
         }
       }
 
-      const samples = ss * ss;
-      const alpha = a / samples;
+      const alpha = a / (ss * ss);
       const i = (y * size + x) * 4;
-
       if (alpha > 0.0001) {
         buf[i] = Math.round(r / a);
         buf[i + 1] = Math.round(g / a);
@@ -156,7 +151,6 @@ function renderIcon(size) {
       }
     }
   }
-
   return encodePng(buf, size, size);
 }
 

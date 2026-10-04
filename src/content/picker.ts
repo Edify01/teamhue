@@ -1,4 +1,5 @@
 import { PALETTE, readableTextOn, normalizeHex } from '@/shared/color';
+import { logoSvg } from '@/shared/logo';
 import type { AssignmentLite, Member } from '@/shared/types';
 
 /**
@@ -57,10 +58,17 @@ const STYLES = `
 
 header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
 .logo {
-  width: 28px; height: 28px; border-radius: 8px; flex: 0 0 auto;
-  background: linear-gradient(135deg, #6366f1, #d946ef);
-  display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 13px;
+  width: 28px; height: 28px; border-radius: 8px; flex: 0 0 auto; line-height: 0;
+  box-shadow: 0 4px 12px -4px rgba(37, 99, 235, .55);
 }
+.logo svg { width: 100%; height: 100%; display: block; }
+.logo circle {
+  transform-box: view-box; transform-origin: 32px 32px;
+  transition: transform .6s cubic-bezier(.34,1.56,.64,1);
+}
+header:hover .logo circle:nth-child(1) { transform: translate(0,-2.4px); }
+header:hover .logo circle:nth-child(2) { transform: translate(2.1px,1.2px); }
+header:hover .logo circle:nth-child(3) { transform: translate(-2.1px,1.2px); }
 .title { font-size: 14px; font-weight: 650; line-height: 1.25; }
 .subtitle {
   font-size: 12px; color: #6b7280; margin-top: 2px; line-height: 1.35;
@@ -95,7 +103,7 @@ header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px;
   transition: border-color .12s ease, box-shadow .12s ease;
 }
 .field input:focus, .field select:focus {
-  border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.18);
+  border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.18);
 }
 .row { display: flex; gap: 8px; align-items: center; }
 .row .hexwrap { position: relative; flex: 1; }
@@ -115,7 +123,7 @@ footer { display: flex; gap: 8px; margin-top: 4px; }
   cursor: pointer; border: 1px solid transparent; transition: filter .12s ease, background .12s ease;
 }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
-.btn.primary { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; }
+.btn.primary { background: linear-gradient(135deg, #2563eb, #1e40af); color: #fff; }
 .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .btn.ghost { background: transparent; color: #4b5563; border-color: rgba(15,18,25,.14); flex: 0 0 auto; padding: 0 14px; }
 .btn.ghost:hover:not(:disabled) { background: rgba(127,127,127,.1); }
@@ -232,7 +240,7 @@ export class ColorPicker {
       <div class="backdrop"></div>
       <div class="panel" role="dialog" aria-modal="true" aria-label="Assign conversation color">
         <header>
-          <div class="logo">T</div>
+          <div class="logo">${logoSvg(28)}</div>
           <div>
             <div class="title">Assign conversation</div>
             <div class="subtitle" title="${escapeHtml(this.ctx.label ?? this.ctx.threadKey)}">${escapeHtml(
