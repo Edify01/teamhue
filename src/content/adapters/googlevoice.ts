@@ -89,6 +89,7 @@ function contactOf(row: HTMLElement): string | null {
   for (const line of textLines(row, 8)) {
     const t = cleanLabel(line, 100);
     if (!t || TIME_OR_META.test(t) || STATUS_TEXT.test(t)) continue;
+    if (/^[A-Z\d]{1,2}$/.test(t)) continue; // avatar initials
     if (/^(you|me):/i.test(t)) continue;
     return t;
   }
@@ -251,9 +252,29 @@ function listRows(): HTMLElement[] {
     if (box) found.add(box);
   }
   // Final safety net: any box on the left that shows a phone number.
-  for (const r of phoneRows()) {
+  const phoneBoxes = phoneRows();
+  for (const r of phoneBoxes) {
     if (Array.from(found).some((f) => f.contains(r) || r.contains(f))) continue;
     found.add(r);
+  }
+  // Saved contacts show a NAME, not a number. They are siblings of the
+  // number boxes in the same list, so every row-sized sibling is a box too.
+  for (const r0 of [...phoneBoxes, ...Array.from(found)]) {
+    // Climb past single-child wrappers to reach the level where rows repeat.
+    let r: HTMLElement = r0;
+    while (r.parentElement && r.parentElement.children.length === 1 && r.parentElement !== document.body) {
+      r = r.parentElement;
+    }
+    const parent = r.parentElement;
+    if (!parent) continue;
+    for (const sib of Array.from(parent.children) as HTMLElement[]) {
+      if (sib === r || found.has(sib)) continue;
+      if (Array.from(found).some((f) => f.contains(sib) || sib.contains(f))) continue;
+      const sr = sib.getBoundingClientRect();
+      if (sr.height < MIN_ROW_HEIGHT || sr.height > MAX_ROW_HEIGHT) continue;
+      if (sib.closest(CONVERSATION_PANE)) continue;
+      if (contactOf(sib)) found.add(sib);
+    }
   }
   const rows = Array.from(found);
   return rows.filter((b) => !rows.some((o) => o !== b && o.contains(b)));
