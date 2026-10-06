@@ -19,7 +19,7 @@ import { cleanLabel } from './dom';
  *     paintbrush and the list always share one colour.
  */
 
-const MAP_KEY = 'teamhue:gv-thread-keys:v1';
+const MAP_KEY = 'teamhue:gv-thread-keys:v2';
 const MAX_ROW_HEIGHT = 140;
 const MIN_ROW_HEIGHT = 36;
 
@@ -219,7 +219,7 @@ function boxFrom(start: Element | null, list = threadList()): HTMLElement | null
   }
 
   if (!best || best.getBoundingClientRect().height === 0) return null;
-  return contactOf(best) ? best : null;
+  return contactOf(best) || rowConversationId(best) ? best : null;
 }
 
 function listRows(): HTMLElement[] {
@@ -246,18 +246,15 @@ function rowKey(row: HTMLElement): { key: string; label: string } | null {
   const id = rowConversationId(row);
   const contact = contactOf(row);
 
-  if (id && idToKey[id]) {
-    const key = idToKey[id];
-    return { key, label: contact ?? key.replace(/^gv:(name:)?/, '') };
+  // Contact line first: it is identical for every teammate, so colours sync.
+  if (contact) {
+    const key = keyForContact(contact);
+    if (id) remember(id, key);
+    return { key, label: contact };
   }
-  if (!contact) {
-    const fromId = id ? keyFromItemId(id) : null;
-    return fromId ? { key: fromId, label: fromId.replace(/^gv:/, '') } : null;
-  }
-
-  const key = keyForContact(contact);
-  if (id) remember(id, key);
-  return { key, label: contact };
+  // Contact unreadable (e.g. transient status text) → fall back to the id.
+  const fromId = id ? (idToKey[id] ?? keyFromItemId(id)) : null;
+  return fromId ? { key: fromId, label: fromId.replace(/^gv:(name:)?/, '') } : null;
 }
 
 function toTarget(row: HTMLElement): ThreadTarget | null {
