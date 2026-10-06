@@ -43,6 +43,8 @@ const TIME_OR_META =
 const STATUS_TEXT =
   /^(sending|sent|delivered|read|seen|failed|not delivered|message not sent|tap to retry|retry|typing|draft|new|unread|missed call|incoming call|outgoing call|voicemail|you|me|mms|photo|image|video|attachment|sticker|gif)\b[.…!]*$/i;
 
+const PHONE_TEXT_EARLY = /^\+?[\d\s().-]{7,}$/;
+
 /* ------------------------------------------------------------------ helpers */
 
 function textLines(el: HTMLElement, limit = 6): string[] {
@@ -76,7 +78,13 @@ function contactOf(row: HTMLElement): string | null {
   const fromExplicit = cleanLabel(explicit?.textContent, 100);
   if (fromExplicit && !STATUS_TEXT.test(fromExplicit)) return fromExplicit;
 
-  // 2. First meaningful line. The preview always comes after it; transient
+  // 2. A phone number line is the strongest identity.
+  for (const line of textLines(row, 4)) {
+    const t = line.trim();
+    if (t.length <= 24 && PHONE_TEXT_EARLY.test(t) && normalizePhone(t)) return t;
+  }
+
+  // 3. First meaningful line. The preview always comes after it; transient
   //    status/time text that GV injects while sending is skipped.
   for (const line of textLines(row, 8)) {
     const t = cleanLabel(line, 100);
@@ -242,8 +250,45 @@ function listRows(): HTMLElement[] {
     const box = boxFrom(a, list && list.contains(a) ? list : looseList(a));
     if (box) found.add(box);
   }
+  // Final safety net: any box on the left that shows a phone number.
+  for (const r of phoneRows()) {
+    if (Array.from(found).some((f) => f.contains(r) || r.contains(f))) continue;
+    found.add(r);
+  }
   const rows = Array.from(found);
   return rows.filter((b) => !rows.some((o) => o !== b && o.contains(b)));
+}
+
+/**
+ * Direct scan: every phone number / contact text on the left side of the page
+ * becomes a row, independent of how GV structures its list. This guarantees
+ * the box showing a number gets the colour assigned to that number.
+ */
+const PHONE_TEXT = /^\+?[\d\s().-]{7,}$/;
+function phoneRows(): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  const maxRight = window.innerWidth * 0.65;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let n: Node | null;
+  while ((n = walker.nextNode())) {
+    const t = n.textContent?.trim();
+    if (!t || t.length > 24 || !PHONE_TEXT.test(t) || !normalizePhone(t)) continue;
+    const el = n.parentElement;
+    if (!el || el.closest(CONVERSATION_PANE + ', header, [role="banner"], input, textarea')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.height === 0 || r.right > maxRight + 4) continue;
+    // Outermost ancestor that is still row-sized.
+    let best: HTMLElement | null = null;
+    let node: HTMLElement | null = el;
+    while (node && node !== document.body) {
+      const nr = node.getBoundingClientRect();
+      if (nr.height > MAX_ROW_HEIGHT || nr.right > maxRight + 40) break;
+      if (nr.height >= MIN_ROW_HEIGHT && nr.width >= 180) best = node;
+      node = node.parentElement;
+    }
+    if (best) out.push(best);
+  }
+  return out;
 }
 
 /** Nearest reasonably wide ancestor to act as the list when voting failed. */
