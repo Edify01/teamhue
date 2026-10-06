@@ -173,6 +173,59 @@ tr.th-painted .th-chip {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
+/* Dragging */
+#th-fab {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#th-fab.th-dragging {
+  cursor: grabbing;
+  transform: scale(1.06);
+  opacity: 1;
+  transition: none;
+  box-shadow:
+    0 20px 40px -10px rgba(37, 99, 235, 0.65),
+    0 8px 18px -8px rgba(15, 18, 25, 0.35);
+}
+
+/* Close (hide) badge — appears on hover, top-left so it never covers the color dot. */
+#th-fab .th-fab-close {
+  position: absolute;
+  left: -7px;
+  top: -7px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #111318;
+  color: #fff;
+  border: 2px solid #fff;
+  font: 600 13px/16px ui-sans-serif, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: scale(0.7);
+  pointer-events: none;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease,
+    background 0.14s ease;
+  cursor: pointer;
+}
+#th-fab:hover .th-fab-close,
+#th-fab:focus-visible .th-fab-close {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+#th-fab .th-fab-close:hover {
+  background: #e11d48;
+}
+#th-fab.th-dragging .th-fab-close {
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* ---------------------------------------------------------------------------
    Toast
    --------------------------------------------------------------------------- */

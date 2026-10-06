@@ -129,16 +129,136 @@ function ensureFab(): HTMLButtonElement {
   fab = document.createElement('button');
   fab.id = 'th-fab';
   fab.type = 'button';
-  fab.innerHTML = FAB_ICON;
+  fab.innerHTML =
+    FAB_ICON +
+    '<span class="th-fab-close" role="button" aria-label="Hide TeamHue button" title="Hide button (turn back on in the TeamHue popup)">×</span>';
   fab.setAttribute('aria-label', 'Set TeamHue color for this conversation');
-  fab.title = 'TeamHue — set color for this conversation';
+  fab.title = 'TeamHue — click to set color · drag to move';
+  fab.addEventListener('pointerdown', onFabPointerDown);
   fab.addEventListener('click', onFabClick);
+  applyFabPosition(fab);
   document.documentElement.appendChild(fab);
   return fab;
 }
 
+/* ---- dragging (position is remembered per site) ---- */
+
+const FAB_POS_KEY = 'teamhue:fab-pos:v1';
+const FAB_SIZE = 48;
+const FAB_MARGIN = 8;
+let fabDragged = false;
+
+function loadFabPos(): { x: number; y: number } | null {
+  try {
+    const p = JSON.parse(localStorage.getItem(FAB_POS_KEY) ?? 'null');
+    return p && typeof p.x === 'number' && typeof p.y === 'number' ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps the button fully on screen, whatever the window size. */
+function clampFab(x: number, y: number) {
+  const maxX = window.innerWidth - FAB_SIZE - FAB_MARGIN;
+  const maxY = window.innerHeight - FAB_SIZE - FAB_MARGIN;
+  return {
+    x: Math.min(Math.max(FAB_MARGIN, x), Math.max(FAB_MARGIN, maxX)),
+    y: Math.min(Math.max(FAB_MARGIN, y), Math.max(FAB_MARGIN, maxY)),
+  };
+}
+
+function applyFabPosition(el: HTMLElement) {
+  const saved = loadFabPos();
+  if (!saved) {
+    el.style.removeProperty('left');
+    el.style.removeProperty('top');
+    el.style.removeProperty('right');
+    el.style.removeProperty('bottom');
+    return;
+  }
+  // Saved as fractions of the viewport so it survives window resizing.
+  const { x, y } = clampFab(saved.x * window.innerWidth, saved.y * window.innerHeight);
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  el.style.right = 'auto';
+  el.style.bottom = 'auto';
+}
+
+function onFabPointerDown(e: PointerEvent) {
+  if (e.button !== 0 || !fab) return;
+  if ((e.target as Element).closest('.th-fab-close')) return;
+  const el = fab;
+  const start = el.getBoundingClientRect();
+  const offX = e.clientX - start.left;
+  const offY = e.clientY - start.top;
+  const sx = e.clientX;
+  const sy = e.clientY;
+  fabDragged = false;
+
+  const move = (ev: PointerEvent) => {
+    if (!fabDragged && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return;
+    if (!fabDragged) {
+      fabDragged = true;
+      el.classList.add('th-dragging');
+      picker.close?.();
+    }
+    const { x, y } = clampFab(ev.clientX - offX, ev.clientY - offY);
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.style.right = 'auto';
+    el.style.bottom = 'auto';
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move, true);
+    window.removeEventListener('pointerup', up, true);
+    window.removeEventListener('pointercancel', up, true);
+    el.classList.remove('th-dragging');
+    if (fabDragged) {
+      const r = el.getBoundingClientRect();
+      try {
+        localStorage.setItem(
+          FAB_POS_KEY,
+          JSON.stringify({ x: r.left / window.innerWidth, y: r.top / window.innerHeight }),
+        );
+      } catch {
+        /* storage blocked */
+      }
+    }
+  };
+  window.addEventListener('pointermove', move, true);
+  window.addEventListener('pointerup', up, true);
+  window.addEventListener('pointercancel', up, true);
+}
+
+window.addEventListener('resize', () => {
+  if (fab?.isConnected) applyFabPosition(fab);
+});
+
+/** Puts the button back in its default corner (when re-enabled from the popup). */
+function resetFabPosition() {
+  try {
+    localStorage.removeItem(FAB_POS_KEY);
+  } catch {
+    /* ignore */
+  }
+  if (fab) applyFabPosition(fab);
+}
+
+async function hideFab() {
+  picker.close?.();
+  fab?.remove();
+  fab = null;
+  settings = { ...settings, showFab: false };
+  toast('Paintbrush hidden — turn it back on in the TeamHue popup. Option/Alt+click still works.');
+  try {
+    await send({ type: 'SET_SETTINGS', settings: { showFab: false } });
+  } catch {
+    /* context gone */
+  }
+}
+
 function updateFab(thread: ActiveThread | null) {
-  if (!thread || !enabledHere()) {
+  if (!thread || !enabledHere() || settings.showFab === false) {
     fab?.remove();
     fab = null;
     return;
@@ -148,16 +268,25 @@ function updateFab(thread: ActiveThread | null) {
   if (current) {
     el.dataset.thActive = '1';
     el.style.setProperty('--th-fab-color', current.color);
-    el.title = `TeamHue — ${current.memberName ?? 'Assigned'}${current.note ? ` · ${current.note}` : ''}`;
+    el.title = `TeamHue — ${current.memberName ?? 'Assigned'}${current.note ? ` · ${current.note}` : ''} · drag to move`;
   } else {
     delete el.dataset.thActive;
-    el.title = 'TeamHue — set color for this conversation';
+    el.title = 'TeamHue — click to set color · drag to move';
   }
 }
 
 async function onFabClick(e: MouseEvent) {
   e.preventDefault();
   e.stopPropagation();
+  if ((e.target as Element).closest('.th-fab-close')) {
+    void hideFab();
+    return;
+  }
+  // A drag ends with a click — don't open the picker for it.
+  if (fabDragged) {
+    fabDragged = false;
+    return;
+  }
   const thread = currentThread();
   if (!thread || !adapter) return;
   openPickerFor(thread, (e.currentTarget as HTMLElement).getBoundingClientRect());
@@ -394,7 +523,9 @@ function applyState(payload: {
     if (a.platform === adapter?.platform) next.set(a.threadKey, a);
   }
   assignments = next;
-  settings = payload.settings;
+  // Re-enabled from the popup → bring it back in its default, easy-to-find corner.
+  if (settings.showFab === false && payload.settings.showFab !== false) resetFabPosition();
+  settings = { ...DEFAULT_SETTINGS, ...payload.settings };
   members = payload.members;
   signedIn = payload.signedIn;
   repaint();

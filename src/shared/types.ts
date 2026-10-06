@@ -84,6 +84,8 @@ export interface Settings {
   showInitials: boolean;
   /** Also tint the open conversation header. */
   tintHeader: boolean;
+  /** Show the floating paintbrush button inside open conversations. */
+  showFab: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -93,6 +95,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showAccentBar: true,
   showInitials: true,
   tintHeader: true,
+  showFab: true,
 };
 
 /** chrome.storage.local keys. */

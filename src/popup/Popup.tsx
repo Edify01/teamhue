@@ -164,6 +164,21 @@ export function Popup() {
           ))}
         </div>
 
+        {/* Floating paintbrush */}
+        <div className="row spread" style={{ marginBottom: 16, gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 550 }}>Floating paintbrush</div>
+            <div className="small muted">Drag it anywhere · hover and click × to hide</div>
+          </div>
+          <Toggle
+            checked={settings.showFab !== false}
+            label="Show floating paintbrush"
+            onChange={(next) =>
+              void run(() => send({ type: 'SET_SETTINGS', settings: { showFab: next } }).then(() => {}))
+            }
+          />
+        </div>
+
         {/* Assignments */}
         <div className="row spread" style={{ marginBottom: 8 }}>
           <span className="section-label" style={{ margin: 0 }}>

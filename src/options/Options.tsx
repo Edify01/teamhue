@@ -190,6 +190,17 @@ export function Options() {
               />
             </SettingRow>
 
+            <SettingRow
+              title="Floating paintbrush"
+              description="Draggable button inside open chats. Option/Alt+click always works."
+            >
+              <Toggle
+                checked={settings.showFab !== false}
+                label="Show floating paintbrush"
+                onChange={(showFab) => patch({ showFab })}
+              />
+            </SettingRow>
+
             <div style={{ padding: '12px 0 4px' }}>
               <div className="row spread" style={{ marginBottom: 7 }}>
                 <span style={{ fontSize: 13, fontWeight: 550 }}>Tint strength</span>
