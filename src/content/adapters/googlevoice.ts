@@ -335,8 +335,55 @@ function toTarget(row: HTMLElement): ThreadTarget | null {
     if (phoneKey) aliases.add(phoneKey);
     if (idToKey[id]) aliases.add(idToKey[id]);
   }
+  // A named contact also answers to its phone number, so colours saved
+  // under the number (older versions) still show on the named box.
+  const linked = keyToPhone[k.key];
+  if (linked) aliases.add(linked);
   aliases.delete(k.key);
   return { element: row, threadKey: k.key, label: k.label, aliases: Array.from(aliases) };
+}
+
+/* -------------------------------------------- contact name ↔ phone number */
+
+const PHONE_MAP_KEY = 'teamhue:gv-name-phone:v1';
+function loadPhoneMap(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(PHONE_MAP_KEY) ?? '{}') as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+let keyToPhone: Record<string, string> = loadPhoneMap();
+
+function linkPhone(nameKey: string, phoneKey: string) {
+  if (!nameKey.startsWith('gv:name:') || keyToPhone[nameKey] === phoneKey) return;
+  keyToPhone[nameKey] = phoneKey;
+  try {
+    localStorage.setItem(PHONE_MAP_KEY, JSON.stringify(keyToPhone));
+  } catch {
+    /* storage blocked */
+  }
+}
+
+/** The contact name shown at the top of the open conversation, if it is a name. */
+function headerName(): string | null {
+  const maxLeft = window.innerWidth * 0.25;
+  const candidates = document.querySelectorAll<HTMLElement>(
+    'gv-conversation-header [gv-test-id="conversation-title"], gv-conversation-header h1, gv-conversation-header h2, ' +
+      '[gv-test-id="conversation-title"], [gv-id="contact-name"], [role="main"] h1, [role="main"] h2, ' +
+      'gv-message-list-header h1, gv-message-list-header h2, [class*="header"] [class*="title"]',
+  );
+  for (const el of Array.from(candidates)) {
+    const r = el.getBoundingClientRect();
+    if (r.height === 0 || r.left < maxLeft) continue; // must be in the right pane
+    if (threadList()?.contains(el)) continue;
+    const t = cleanLabel(el.textContent, 100);
+    if (!t || STATUS_TEXT.test(t) || TIME_OR_META.test(t)) continue;
+    if (/^\+?[\d\s().-]{7,}$/.test(t)) return null; // header is a number → not a saved contact
+    if (/^(messages|calls|voicemail|contacts|google voice|voice|settings|archive|spam)$/i.test(t)) continue;
+    return t;
+  }
+  return null;
 }
 
 /* ----------------------------------------------- remember which box opened */
@@ -401,7 +448,7 @@ export const googleVoiceAdapter: Adapter = {
     // 1. The box GV marks as selected.
     if (!row) row = rows.find(isSelected) ?? null;
     // 2. The box you just clicked to open this conversation.
-    if (!row && lastClicked && Date.now() - lastClicked.at < 8000) row = byKey(lastClicked.key);
+    if (!row && lastClicked && Date.now() - lastClicked.at < 120000) row = byKey(lastClicked.key);
     // 3. Previously learned for this conversation id.
     if (!row && idToKey[itemId]) row = byKey(idToKey[itemId]);
     // 4. The id itself is a phone number shown in the list.
@@ -414,11 +461,21 @@ export const googleVoiceAdapter: Adapter = {
       const k = rowKey(row);
       if (k) ({ key, label } = k);
     }
+    // Saved contact: the open conversation's header shows the NAME, which is
+    // exactly what the list box shows. Key by that name so the box matches.
+    if (!key || (phoneKey && key === phoneKey)) {
+      const name = headerName();
+      if (name) {
+        key = keyForContact(name);
+        label = name;
+      }
+    }
     if (!key && idToKey[itemId]) key = idToKey[itemId];
     if (!key && phoneKey) key = phoneKey;
     if (!key) return null; // can't tie to a list box → hide the paintbrush
 
     remember(itemId, key);
+    if (phoneKey && phoneKey !== key) linkPhone(key, phoneKey);
     const aliases = [`gv:id:${itemId}`];
     if (phoneKey && phoneKey !== key) aliases.push(phoneKey);
     return { threadKey: key, label: label ?? key.replace(/^gv:(name:)?/, ''), aliases };
@@ -427,4 +484,5 @@ export const googleVoiceAdapter: Adapter = {
 
 window.addEventListener('storage', (e) => {
   if (e.key === MAP_KEY) idToKey = loadMap();
+  if (e.key === PHONE_MAP_KEY) keyToPhone = loadPhoneMap();
 });
