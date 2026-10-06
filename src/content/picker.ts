@@ -14,6 +14,8 @@ export interface PickerContext {
   threadKey: string;
   label: string | null;
   current: AssignmentLite | null;
+  /** Signed-in user — pre-selected as the owner for new assignments. */
+  myUserId?: string | null;
 }
 
 export interface PickerCallbacks {
@@ -166,10 +168,16 @@ export class ColorPicker {
     this.error = null;
     this.busy = false;
 
-    this.color = ctx.current?.color ?? members[0]?.color ?? PALETTE[5].hex;
+    // Default owner: whoever already owns it; otherwise the signed-in user.
+    const me = members.find((m) => m.user_id === ctx.myUserId) ?? null;
+    const existing = ctx.current
+      ? (members.find((m) => m.display_name === ctx.current?.memberName) ?? null)
+      : null;
+    const owner = existing ?? me ?? members[0] ?? null;
+
+    this.color = ctx.current?.color ?? owner?.color ?? PALETTE[5].hex;
     this.note = ctx.current?.note ?? '';
-    this.memberId =
-      members.find((m) => m.display_name === ctx.current?.memberName)?.id ?? members[0]?.id ?? null;
+    this.memberId = owner?.id ?? null;
 
     this.host = document.createElement('div');
     this.host.id = 'th-picker-host';

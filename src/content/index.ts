@@ -22,6 +22,7 @@ let assignments = new Map<string, AssignmentLite>();
 let members: Member[] = [];
 let settings: Settings = DEFAULT_SETTINGS;
 let signedIn = false;
+let myUserId: string | null = null;
 let observer: MutationObserver | null = null;
 let fab: HTMLButtonElement | null = null;
 let dead = false;
@@ -374,7 +375,7 @@ function openPickerFor(thread: ActiveThread, anchor: DOMRect) {
     }
   };
 
-  picker.open({ threadKey, label, current }, members, anchor, {
+  picker.open({ threadKey, label, current, myUserId }, members, anchor, {
     async onApply({ color, memberId, note }) {
       await send({
         type: 'SET_ASSIGNMENT',
@@ -517,6 +518,7 @@ function applyState(payload: {
   settings: Settings;
   members: Member[];
   signedIn: boolean;
+  userId?: string | null;
 }) {
   const next = new Map<string, AssignmentLite>();
   for (const a of payload.assignments) {
@@ -528,6 +530,7 @@ function applyState(payload: {
   settings = { ...DEFAULT_SETTINGS, ...payload.settings };
   members = payload.members;
   signedIn = payload.signedIn;
+  if (payload.userId !== undefined) myUserId = payload.userId;
   repaint();
 }
 
@@ -537,7 +540,7 @@ async function boot() {
       assignments: AssignmentLite[];
       settings: Settings;
       members: Member[];
-      auth: { status: string };
+      auth: { status: string; userId?: string | null };
     }>({ type: 'GET_STATE' });
 
     applyState({
@@ -545,6 +548,7 @@ async function boot() {
       settings: state.settings,
       members: state.members,
       signedIn: state.auth.status === 'signed-in',
+      userId: state.auth.userId ?? null,
     });
   } catch (err) {
     if (isContextInvalidated(err)) {
@@ -561,6 +565,7 @@ async function boot() {
         settings: msg.settings,
         members: msg.members,
         signedIn: msg.signedIn,
+        userId: msg.userId,
       });
     }
   });

@@ -52,6 +52,8 @@ export interface BroadcastMessage {
   settings: Settings;
   members: Member[];
   signedIn: boolean;
+  /** Signed-in user's id — the picker pre-selects their own member entry. */
+  userId?: string | null;
 }
 
 /**

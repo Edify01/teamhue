@@ -103,6 +103,7 @@ export async function broadcast() {
     settings: state.settings,
     members: state.members,
     signedIn: state.auth.status === 'signed-in',
+    userId: state.auth.userId,
   };
 
   // Extension pages (popup / options).
