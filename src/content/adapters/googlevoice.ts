@@ -223,15 +223,37 @@ function boxFrom(start: Element | null, list = threadList()): HTMLElement | null
 }
 
 function listRows(): HTMLElement[] {
-  const list = threadList();
-  if (!list) return [];
   const found = new Set<HTMLElement>();
-  for (const seed of Array.from(list.querySelectorAll<HTMLElement>(ROW_SEEDS))) {
-    const box = boxFrom(seed, list);
+  const list = threadList();
+  if (list) {
+    for (const seed of Array.from(list.querySelectorAll<HTMLElement>(ROW_SEEDS))) {
+      const box = boxFrom(seed, list);
+      if (box) found.add(box);
+    }
+  }
+  // Safety net: any conversation link in the left part of the page.
+  const maxRight = window.innerWidth * 0.65;
+  for (const a of Array.from(
+    document.querySelectorAll<HTMLElement>('a[href*="itemId="], [gv-thread-id], gv-thread-item'),
+  )) {
+    if (a.closest(CONVERSATION_PANE)) continue;
+    const r = a.getBoundingClientRect();
+    if (r.height === 0 || r.right > maxRight + 4) continue;
+    const box = boxFrom(a, list && list.contains(a) ? list : looseList(a));
     if (box) found.add(box);
   }
   const rows = Array.from(found);
   return rows.filter((b) => !rows.some((o) => o !== b && o.contains(b)));
+}
+
+/** Nearest reasonably wide ancestor to act as the list when voting failed. */
+function looseList(el: HTMLElement): HTMLElement | null {
+  let node = el.parentElement;
+  while (node && node !== document.body) {
+    if (node.getBoundingClientRect().height > MAX_ROW_HEIGHT * 2) return node;
+    node = node.parentElement;
+  }
+  return null;
 }
 
 /**
@@ -260,7 +282,16 @@ function rowKey(row: HTMLElement): { key: string; label: string } | null {
 function toTarget(row: HTMLElement): ThreadTarget | null {
   const k = rowKey(row);
   if (!k) return null;
-  return { element: row, threadKey: k.key, label: k.label, aliases: aliasesFor(k.key) };
+  const aliases = new Set(aliasesFor(k.key));
+  const id = rowConversationId(row);
+  if (id) {
+    aliases.add(`gv:id:${id}`);
+    const phoneKey = keyFromItemId(id);
+    if (phoneKey) aliases.add(phoneKey);
+    if (idToKey[id]) aliases.add(idToKey[id]);
+  }
+  aliases.delete(k.key);
+  return { element: row, threadKey: k.key, label: k.label, aliases: Array.from(aliases) };
 }
 
 /* ----------------------------------------------- remember which box opened */
@@ -320,8 +351,10 @@ export const googleVoiceAdapter: Adapter = {
     const rows = listRows();
     const byKey = (key: string) => rows.find((r) => rowKey(r)?.key === key) ?? null;
 
+    // 0. The box whose own link points at this conversation.
+    let row = rows.find((r) => rowConversationId(r) === itemId) ?? null;
     // 1. The box GV marks as selected.
-    let row = rows.find(isSelected) ?? null;
+    if (!row) row = rows.find(isSelected) ?? null;
     // 2. The box you just clicked to open this conversation.
     if (!row && lastClicked && Date.now() - lastClicked.at < 8000) row = byKey(lastClicked.key);
     // 3. Previously learned for this conversation id.
