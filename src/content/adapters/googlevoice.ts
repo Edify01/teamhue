@@ -34,7 +34,14 @@ const ROW_SEEDS =
   'a[href*="itemId="], [role="listitem"], [role="option"], [role="row"]';
 
 const TIME_OR_META =
-  /^(\d{1,2}:\d{2}\s*(am|pm)?|\d+\s*(m|min|h|hr|d|w)|now|yesterday|today|mon|tue|wed|thu|fri|sat|sun|[a-z]{3}\s\d{1,2}|\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d+)$/i;
+  /^(\d{1,2}:\d{2}\s*(am|pm)?|\d+\s*(s|sec|m|min|mins|h|hr|hrs|d|w)( ago)?|now|just now|yesterday|today|mon|tue|wed|thu|fri|sat|sun|[a-z]{3}\s\d{1,2}(,\s*\d{4})?|\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d+)$/i;
+
+/**
+ * Transient status text Google Voice shows while/after sending. These appear
+ * in the row temporarily and must never be mistaken for the contact.
+ */
+const STATUS_TEXT =
+  /^(sending|sent|delivered|read|seen|failed|not delivered|message not sent|tap to retry|retry|typing|draft|new|unread|missed call|incoming call|outgoing call|voicemail|you|me|mms|photo|image|video|attachment|sticker|gif)\b[.…!]*$/i;
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -62,19 +69,31 @@ function textLines(el: HTMLElement, limit = 6): string[] {
  * preview is always after the contact line, so it is never used.
  */
 function contactOf(row: HTMLElement): string | null {
-  // Explicit name elements in known GV versions take priority.
+  // 1. Explicit name elements in known GV versions take priority.
   const explicit = row.querySelector<HTMLElement>(
-    '[gv-test-id="conversation-title"], [class*="participants"], [class*="contact-name"], [class*="thread-item-name"]',
+    '[gv-test-id="conversation-title"], [gv-id="contact-name"], [class*="participants"], [class*="contact-name"], [class*="thread-item-name"]',
   );
   const fromExplicit = cleanLabel(explicit?.textContent, 100);
-  if (fromExplicit) return fromExplicit;
+  if (fromExplicit && !STATUS_TEXT.test(fromExplicit)) return fromExplicit;
 
-  for (const line of textLines(row)) {
+  // 2. First meaningful line. The preview always comes after it; transient
+  //    status/time text that GV injects while sending is skipped.
+  for (const line of textLines(row, 8)) {
     const t = cleanLabel(line, 100);
-    if (!t || TIME_OR_META.test(t)) continue;
+    if (!t || TIME_OR_META.test(t) || STATUS_TEXT.test(t)) continue;
     if (/^(you|me):/i.test(t)) continue;
-    if (/^(unread|missed call|voicemail|draft)$/i.test(t)) continue;
     return t;
+  }
+  return null;
+}
+
+/** Conversation id carried by the row itself (stable across new messages). */
+function rowConversationId(row: HTMLElement): string | null {
+  for (const el of [row, ...Array.from(row.querySelectorAll<HTMLElement>('[gv-thread-id], [data-thread-id], a[href*="itemId="]'))]) {
+    const attr = el.getAttribute('gv-thread-id') ?? el.getAttribute('data-thread-id');
+    if (attr) return attr;
+    const fromHref = itemIdFrom(el.getAttribute('href'));
+    if (fromHref) return fromHref;
   }
   return null;
 }
@@ -215,15 +234,28 @@ function listRows(): HTMLElement[] {
   return rows.filter((b) => !rows.some((o) => o !== b && o.contains(b)));
 }
 
+/**
+ * The row's key. Priority:
+ *   1. A conversation id on the row → the key learned for it (never changes
+ *      when new messages arrive).
+ *   2. The contact line (phone → E.164, else name).
+ * The id → key binding is remembered, so if GV later shows transient text
+ * where the name was, the id still resolves to the original key.
+ */
 function rowKey(row: HTMLElement): { key: string; label: string } | null {
-  // A row that links to its conversation id lets us learn the mapping for free.
-  const href =
-    row.closest('a')?.getAttribute('href') ??
-    row.querySelector('a[href*="itemId="]')?.getAttribute('href');
+  const id = rowConversationId(row);
   const contact = contactOf(row);
-  if (!contact) return null;
+
+  if (id && idToKey[id]) {
+    const key = idToKey[id];
+    return { key, label: contact ?? key.replace(/^gv:(name:)?/, '') };
+  }
+  if (!contact) {
+    const fromId = id ? keyFromItemId(id) : null;
+    return fromId ? { key: fromId, label: fromId.replace(/^gv:/, '') } : null;
+  }
+
   const key = keyForContact(contact);
-  const id = itemIdFrom(href);
   if (id) remember(id, key);
   return { key, label: contact };
 }

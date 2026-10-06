@@ -21,8 +21,7 @@ import { dedupe, cleanLabel } from './dom';
 function threadIdOf(row: HTMLElement): string | null {
   const direct =
     row.getAttribute('data-legacy-thread-id') ??
-    row.getAttribute('data-thread-id') ??
-    row.getAttribute('data-legacy-last-message-id');
+    row.getAttribute('data-thread-id');
   if (direct) return direct.replace(/^#?(thread-f:|msg-f:)?/, '');
 
   const nested = row.querySelector<HTMLElement>(
@@ -32,10 +31,8 @@ function threadIdOf(row: HTMLElement): string | null {
     nested?.getAttribute('data-legacy-thread-id') ?? nested?.getAttribute('data-thread-id');
   if (value) return value.replace(/^#?(thread-f:|msg-f:)?/, '');
 
-  // Older Gmail puts the id on the row element itself as `id="..."`.
-  const rowId = row.getAttribute('id');
-  if (rowId && /^[:\w]+$/.test(rowId) && rowId.length > 1) return rowId;
-
+  // Never fall back to last-message ids or row DOM ids: those change whenever
+  // a new message arrives and would make the colour disappear.
   return null;
 }
 
@@ -125,10 +122,10 @@ export const outlookAdapter: Adapter = {
       // Skip wrappers that contain other rows.
       if (row.querySelector('div[role="option"]')) continue;
 
+      // Conversation id only — item ids are per-message and change on reply.
       const id =
         row.getAttribute('data-convid') ??
-        row.getAttribute('data-item-id') ??
-        row.getAttribute('id');
+        row.querySelector<HTMLElement>('[data-convid]')?.getAttribute('data-convid');
       if (!id || id.length < 2) continue;
 
       const nameEl = row.querySelector<HTMLElement>(
